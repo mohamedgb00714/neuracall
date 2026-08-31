@@ -14,8 +14,12 @@
   },
   "dependencies": {
     "@neuracall/aai-client": "*",
+    "@neuracall/agent": "*",
+    "@neuracall/audio-pipeline": "*",
     "@neuracall/config": "*",
+    "@neuracall/crm": "*",
     "@neuracall/device-manager": "*",
+    "@neuracall/orchestrator": "*",
     "@neuracall/scrcpy-bridge": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

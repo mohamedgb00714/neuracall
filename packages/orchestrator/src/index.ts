@@ -4,3 +4,6 @@ export * from "./callStore.js";
 export * from "./orchestrator.js";
 export * from "./scrcpyCapture.js";
 export * from "./audioInjector.js";
+export * from "./metrics.js";
+export * from "./watchdog.js";
+export * from "./health.js";

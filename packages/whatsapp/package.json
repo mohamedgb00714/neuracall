@@ -1,5 +1,5 @@
 {
-  "name": "@neuracall/agent",
+  "name": "@neuracall/whatsapp",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -18,7 +18,7 @@
     "test": "node --test \"dist-test/test/*.test.js\""
   },
   "dependencies": {
-    "@neuracall/audio-pipeline": "*",
+    "@neuracall/agent": "*",
     "@neuracall/config": "*",
     "@neuracall/orchestrator": "*"
   },

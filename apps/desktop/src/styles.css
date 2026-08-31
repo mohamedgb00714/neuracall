@@ -370,3 +370,136 @@ h2 {
 .phase-in-call {
   color: var(--accent);
 }
+
+/* ---------------------------------------------------------- autopilot */
+
+.autopilot {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.autopilot-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.autopilot-head h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.autopilot-head button {
+  margin-left: auto;
+}
+
+.pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+.pill-on {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+.pill-off {
+  color: var(--text-dim);
+}
+
+/* Reasons the agent is not fully operational — warn, not error: the call
+   still runs, it just cannot do everything. */
+.degraded {
+  margin: 8px 0;
+  padding-left: 18px;
+  font-size: 11px;
+  color: var(--warn);
+}
+
+.autopilot-errors {
+  margin: 8px 0;
+  padding-left: 18px;
+  font-size: 11px;
+  color: var(--danger);
+}
+
+.call-list {
+  margin-top: 12px;
+}
+
+.call-list h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.call-card {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+
+.call-card header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.call-card header button {
+  margin-left: auto;
+}
+
+.tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.state-talking {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+.state-incoming {
+  color: var(--warn);
+}
+
+.call-error {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--danger);
+}
+
+.call-transcript {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.turn {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.turn .who {
+  flex: 0 0 52px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.turn-agent .who {
+  color: var(--accent);
+}

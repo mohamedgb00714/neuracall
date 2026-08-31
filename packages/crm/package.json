@@ -1,5 +1,5 @@
 {
-  "name": "@neuracall/agent",
+  "name": "@neuracall/crm",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -18,8 +18,6 @@
     "test": "node --test \"dist-test/test/*.test.js\""
   },
   "dependencies": {
-    "@neuracall/audio-pipeline": "*",
-    "@neuracall/config": "*",
     "@neuracall/orchestrator": "*"
   },
   "devDependencies": {

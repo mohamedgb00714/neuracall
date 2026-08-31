@@ -53,6 +53,40 @@ interface CaptureMsg {
 
 type CallState = "idle" | "ringing" | "offhook" | "unknown";
 
+interface AutopilotStatusMsg {
+  enabled: boolean;
+  /** Human-readable reasons the agent is not fully operational. */
+  degraded: string[];
+  llmConfigured: boolean;
+  ttsConfigured: boolean;
+  injection: "off" | "sink" | "unavailable";
+  activeCalls: number;
+  handled: number;
+}
+
+interface TranscriptEntryMsg {
+  speaker: "caller" | "agent";
+  text: string;
+  at: number;
+  turnOrder?: number;
+}
+
+interface CallRecordMsg {
+  callId: string;
+  deviceId: string;
+  channelId: string;
+  direction: string;
+  state: string;
+  outcome: string | null;
+  remoteParty: string | null;
+  startedAt: number;
+  answeredAt: number | null;
+  endedAt: number | null;
+  transcript: TranscriptEntryMsg[];
+  audioPath: string | null;
+  error?: string;
+}
+
 function subscribe<T>(channel: string) {
   return (cb: (msg: T) => void) => {
     const listener = (_e: unknown, msg: T) => cb(msg);
@@ -117,6 +151,17 @@ const api = {
 
   captureStatus: (): Promise<CaptureMsg[]> => ipcRenderer.invoke("capture:status"),
 
+  // ---- autopilot
+  enableAutopilot: (): Promise<{ ok: boolean; status?: AutopilotStatusMsg; error?: string }> =>
+    ipcRenderer.invoke("autopilot:enable"),
+  disableAutopilot: (): Promise<{ ok: boolean; status?: AutopilotStatusMsg; error?: string }> =>
+    ipcRenderer.invoke("autopilot:disable"),
+  autopilotStatus: (): Promise<AutopilotStatusMsg | null> =>
+    ipcRenderer.invoke("autopilot:status"),
+  autopilotCalls: (): Promise<CallRecordMsg[]> => ipcRenderer.invoke("autopilot:activeCalls"),
+  endAutopilotCall: (callId: string): Promise<OkResult> =>
+    ipcRenderer.invoke("autopilot:endCall", { callId }),
+
   // ---- event streams
   onDevicesChange: subscribe<DeviceMsg>("devices:update"),
   onCallStateChange: subscribe<{ id: string; state: CallState }>("call:state-change"),
@@ -125,6 +170,12 @@ const api = {
   onTurn: subscribe<TurnMsg>("session:turn"),
   onSessionEnd: subscribe<SessionEndMsg>("session:end"),
   onError: subscribe<{ key: unknown; error: string }>("session:error"),
+  onAutopilotCall: subscribe<CallRecordMsg>("autopilot:call"),
+  onAutopilotState: subscribe<{ callId: string; state: string; reason?: string }>("autopilot:state"),
+  onAutopilotTranscript: subscribe<{ callId: string; entry: TranscriptEntryMsg }>(
+    "autopilot:transcript",
+  ),
+  onAutopilotError: subscribe<{ message: string; callId?: string }>("autopilot:error"),
 };
 
 contextBridge.exposeInMainWorld("neuracall", api);

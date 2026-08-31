@@ -1,9 +1,8 @@
 /**
  * The text-to-speech port.
  *
- * Only the interface lives here. The concrete provider (and the injection
- * transport that actually gets the audio onto the call) is Phase 5's TTS task;
- * this exists so the agent can be built and tested against it now.
+ * Only the interface lives here; the concrete providers are in
+ * `./ttsProviders.ts`, so the agent depends on the port and never on a vendor.
  *
  * `SilentTts` is the default so a call still runs end to end without a TTS
  * provider configured: the agent thinks, replies, biases the next turn and

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { resolve } from "node:path";
 import type { AppConfig } from "@neuracall/config";
 import {
   RealtimeSessionManager,
@@ -24,6 +25,7 @@ import {
   type ToolName,
 } from "@neuracall/scrcpy-bridge";
 import { DeviceAudioCapture, type CaptureSession } from "./capture.js";
+import { Autopilot, type AutopilotStatus } from "./autopilot.js";
 
 export interface TurnKeyed {
   key: SessionKey;
@@ -39,6 +41,15 @@ export interface RuntimeOptions {
   callPollIntervalMs?: number;
   /** scrcpy audio source used for call capture. Default "mic". */
   audioSource?: ScrcpyAudioSource;
+  /** App data root for recordings and the call log. Default "<cwd>/data". */
+  dataDir?: string;
+  /**
+   * Audio sink the agent's voice is played into (normally a Bluetooth HFP sink
+   * the phone treats as its headset). Unset means the caller hears nothing.
+   */
+  injectSink?: string;
+  /** Bind the operator health/metrics endpoint on this loopback port. */
+  healthPort?: number;
 }
 
 export interface CaptureUpdate extends CaptureSession {
@@ -71,10 +82,13 @@ export class Runtime extends EventEmitter {
   private callTimer: NodeJS.Timeout | null = null;
   private callPolling = false;
   private readonly callStates = new Map<string, CallState>();
+  private readonly opts: RuntimeOptions;
+  private autopilotInstance: Autopilot | null = null;
 
   constructor(config: AppConfig, opts: RuntimeOptions = {}) {
     super();
     this.config = config;
+    this.opts = opts;
     this.audioSource = opts.audioSource ?? "mic";
     this.callPollIntervalMs = opts.callPollIntervalMs ?? 2000;
     this.manager = new RealtimeSessionManager(config, {
@@ -152,6 +166,55 @@ export class Runtime extends EventEmitter {
   /** Mark a device phase from the orchestrator (e.g. in-call). */
   setDevicePhase(id: string, phase: DevicePhase): void {
     this.devices.setPhase(id, phase);
+  }
+
+  // ---------------------------------------------------------- autopilot
+
+  /**
+   * Autonomous call handling, built on first use.
+   *
+   * Constructed lazily and left disabled: turning it on makes the app answer
+   * real inbound calls without further confirmation, so it is an explicit
+   * operator action rather than a side effect of the window opening.
+   */
+  get autopilot(): Autopilot {
+    if (!this.autopilotInstance) {
+      const opts = this.opts;
+      this.autopilotInstance = new Autopilot({
+        config: this.config,
+        devices: this.devices,
+        sessions: this.manager,
+        runner: this.runner,
+        dataDir: opts.dataDir ?? resolve(process.cwd(), "data"),
+        ...(opts.audioSource !== undefined ? { audioSource: opts.audioSource } : {}),
+        ...(opts.injectSink !== undefined ? { injectSink: opts.injectSink } : {}),
+        ...(opts.healthPort !== undefined ? { healthPort: opts.healthPort } : {}),
+      });
+      this.autopilotInstance.on("call", (record) => this.emit("autopilot-call", record));
+      this.autopilotInstance.on("state", (callId, state, reason) =>
+        this.emit("autopilot-state", callId, state, reason),
+      );
+      this.autopilotInstance.on("transcript", (callId, entry) =>
+        this.emit("autopilot-transcript", callId, entry),
+      );
+      this.autopilotInstance.on("error", (message, callId) =>
+        this.emit("autopilot-error", message, callId),
+      );
+    }
+    return this.autopilotInstance;
+  }
+
+  /** Turn autonomous answering on. Outward-facing: real calls get picked up. */
+  enableAutopilot(): AutopilotStatus {
+    return this.autopilot.enable();
+  }
+
+  disableAutopilot(): AutopilotStatus {
+    return this.autopilot.disable();
+  }
+
+  autopilotStatus(): AutopilotStatus {
+    return this.autopilot.status();
   }
 
   // ---------------------------------------------------------------- STT
@@ -322,6 +385,9 @@ export class Runtime extends EventEmitter {
       clearInterval(this.callTimer);
       this.callTimer = null;
     }
+    // Stop answering new calls and hang up anything in flight before the
+    // sessions below are terminated, so no call is left mid-teardown.
+    await this.autopilotInstance?.shutdown();
     this.capture.stopAll();
     this.devices.stop();
     await this.manager.closeAll("shutdown");

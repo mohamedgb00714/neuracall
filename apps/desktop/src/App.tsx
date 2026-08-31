@@ -3,6 +3,7 @@ import { StatusBar } from "./components/StatusBar";
 import { DevicePanel } from "./components/DevicePanel";
 import { TranscriptView } from "./components/TranscriptView";
 import { ToolsNotice } from "./components/ToolsNotice";
+import { AutopilotPanel } from "./components/AutopilotPanel";
 import { useLiveTranscript } from "./hooks/useLiveTranscript";
 
 export interface ConfigInfo {
@@ -49,6 +50,7 @@ export function App() {
           <DevicePanel />
         </aside>
         <section className="content">
+          <AutopilotPanel />
           <TranscriptView turns={turns} sessions={sessions} />
         </section>
       </main>

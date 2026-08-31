@@ -130,6 +130,36 @@ function registerIpc() {
 
   ipcMain.handle("capture:status", () => runtime?.captureStatus() ?? []);
 
+  // ---- autopilot (autonomous answering)
+  // Enabling this makes the app pick up real inbound calls, so it is only ever
+  // driven by an explicit operator action in the UI — never on startup.
+  ipcMain.handle("autopilot:enable", () => {
+    try {
+      return { ok: true, status: requireRuntime().enableAutopilot() };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle("autopilot:disable", () => {
+    try {
+      return { ok: true, status: requireRuntime().disableAutopilot() };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle("autopilot:status", () => {
+    if (!runtime) return null;
+    return runtime.autopilotStatus();
+  });
+
+  ipcMain.handle("autopilot:activeCalls", () => runtime?.autopilot.activeCalls ?? []);
+
+  ipcMain.handle("autopilot:endCall", (_e, { callId }) =>
+    attempt(() => requireRuntime().autopilot.endCall(callId)),
+  );
+
   ipcMain.handle("system:shutdown", async () => {
     await runtime?.shutdown();
   });
@@ -151,6 +181,17 @@ function wireRuntimeEvents(rt: Runtime) {
     send("capture:log", { id, line, isError });
     if (isError) console.warn(`[capture ${id}] ${line}`);
   });
+  rt.on("autopilot-call", (record) => send("autopilot:call", record));
+  rt.on("autopilot-state", (callId, state, reason) =>
+    send("autopilot:state", { callId, state, reason }),
+  );
+  rt.on("autopilot-transcript", (callId, entry) =>
+    send("autopilot:transcript", { callId, entry }),
+  );
+  rt.on("autopilot-error", (message, callId) => {
+    send("autopilot:error", { message, callId });
+    console.warn(`[autopilot${callId ? ` ${callId}` : ""}] ${message}`);
+  });
 }
 
 app.whenReady().then(() => {
@@ -160,7 +201,16 @@ app.whenReady().then(() => {
   // A bad/missing .env must not prevent the window from opening — the UI
   // reports the config error and the tool checks still work.
   try {
-    runtime = new Runtime(getConfig());
+    // Operator knobs stay in the environment rather than the UI: injecting
+    // agent audio and exposing a metrics port are deployment decisions, not
+    // things to toggle mid-call.
+    const injectSink = process.env.NEURACALL_INJECT_SINK?.trim();
+    const healthPort = Number(process.env.NEURACALL_HEALTH_PORT);
+    runtime = new Runtime(getConfig(), {
+      dataDir: resolve(app.getPath("userData"), "data"),
+      ...(injectSink ? { injectSink } : {}),
+      ...(Number.isInteger(healthPort) && healthPort > 0 ? { healthPort } : {}),
+    });
     logStartupBanner(runtime.config); // region + endpoints, key masked
     runtime.start(); // begin poll-based ADB discovery + call-state polling
     wireRuntimeEvents(runtime);

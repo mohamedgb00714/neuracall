@@ -55,6 +55,40 @@ export interface SessionEndMessage {
   reason: string;
 }
 
+export interface AutopilotStatus {
+  enabled: boolean;
+  /** Human-readable reasons the agent is not fully operational. */
+  degraded: string[];
+  llmConfigured: boolean;
+  ttsConfigured: boolean;
+  injection: "off" | "sink" | "unavailable";
+  activeCalls: number;
+  handled: number;
+}
+
+export interface TranscriptEntry {
+  speaker: "caller" | "agent";
+  text: string;
+  at: number;
+  turnOrder?: number;
+}
+
+export interface CallRecord {
+  callId: string;
+  deviceId: string;
+  channelId: string;
+  direction: string;
+  state: string;
+  outcome: string | null;
+  remoteParty: string | null;
+  startedAt: number;
+  answeredAt: number | null;
+  endedAt: number | null;
+  transcript: TranscriptEntry[];
+  audioPath: string | null;
+  error?: string;
+}
+
 /** The IPC bridge exposed by the preload script (see electron/preload.mts). */
 export interface NeuraCallBridge {
   getConfigInfo(): Promise<{
@@ -84,6 +118,20 @@ export interface NeuraCallBridge {
   onTurn(cb: (msg: TurnMessage) => void): () => void;
   onSessionEnd(cb: (msg: SessionEndMessage) => void): () => void;
   onError(cb: (msg: { key: unknown; error: string }) => void): () => void;
+
+  enableAutopilot(): Promise<{ ok: boolean; status?: AutopilotStatus; error?: string }>;
+  disableAutopilot(): Promise<{ ok: boolean; status?: AutopilotStatus; error?: string }>;
+  autopilotStatus(): Promise<AutopilotStatus | null>;
+  autopilotCalls(): Promise<CallRecord[]>;
+  endAutopilotCall(callId: string): Promise<OkResult>;
+  onAutopilotCall(cb: (record: CallRecord) => void): () => void;
+  onAutopilotState(
+    cb: (msg: { callId: string; state: string; reason?: string }) => void,
+  ): () => void;
+  onAutopilotTranscript(
+    cb: (msg: { callId: string; entry: TranscriptEntry }) => void,
+  ): () => void;
+  onAutopilotError(cb: (msg: { message: string; callId?: string }) => void): () => void;
 }
 
 declare global {
