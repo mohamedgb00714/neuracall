@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildWebSocketUrl, normalizeTurn } from "../src/realtime.js";
-import { getConfig, loadEnv } from "@neuracall/config";
+import { getConfig } from "@neuracall/config";
 import { RealtimeCloseCode } from "../src/types.js";
 
 test("buildWebSocketUrl requires singular speech_model and sample_rate", () => {

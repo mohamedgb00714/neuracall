@@ -6,8 +6,6 @@ import {
   type ClientMessage,
   type BeginMessage,
   type TurnMessage,
-  type SpeechStartedMessage,
-  type SpeakerRevisionMessage,
   type TerminationMessage,
   type RealtimeParams,
   type SessionState,
@@ -45,6 +43,23 @@ function buildWebSocketUrl(host: string, params: RealtimeParams): string {
   return `wss://${host}/v3/ws?${qs}`;
 }
 
+/** The subset of the `ws` WebSocket the client actually uses (for test seams). */
+export interface WsLike extends EventEmitter {
+  readonly readyState: number;
+  send(data: string | Buffer | Uint8Array | ArrayBuffer): void;
+  close(code?: number, reason?: string): void;
+  terminate(): void;
+}
+
+/** Build a WebSocket as `ws` does, so a mock can be injected in tests. */
+export type WebSocketFactory = (
+  url: string,
+  opts?: { headers?: Record<string, string> },
+) => WsLike;
+
+/** The real `ws` WebSocket honours WsLike. */
+const realWsFactory: WebSocketFactory = (url, opts) => new WebSocket(url, opts);
+
 /**
  * A single realtime STT session backed by the AssemblyAI v3 WebSocket.
  *
@@ -57,18 +72,29 @@ function buildWebSocketUrl(host: string, params: RealtimeParams): string {
  * 3-hour cap.
  */
 export class RealtimeStream extends EventEmitter {
-  private ws: WebSocket | null = null;
+  private ws: WsLike | null = null;
   private authToken: string | undefined;
   private readonly config: AppConfig;
   private readonly params: RealtimeParams;
+  private readonly wsFactory: WebSocketFactory;
   private _state: SessionState = "closed";
   private begin: BeginMessage | null = null;
   private closeTimer: NodeJS.Timeout | null = null;
+  /** Recommended PCM bytes per send; corrected downward on 3007 (bad chunk size). */
+  private chunkBytes: number;
 
-  constructor(config: AppConfig, params: RealtimeParams) {
+  constructor(
+    config: AppConfig,
+    params: RealtimeParams,
+    deps: { wsFactory?: WebSocketFactory } = {},
+  ) {
     super();
     this.config = config;
     this.params = params;
+    this.wsFactory = deps.wsFactory ?? realWsFactory;
+    // Default to ~100 ms of mono16 PCM (3200 bytes at 16 kHz) — comfortably
+    // inside the valid 50–1000 ms range so a 3007 correction can halve it.
+    this.chunkBytes = Math.max(1600, Math.floor((params.sampleRate * 2) / 10));
   }
 
   /** Authenticate with a pre-minted token (browser/mobile pattern). */
@@ -85,9 +111,14 @@ export class RealtimeStream extends EventEmitter {
     return this.begin?.id ?? null;
   }
 
+  /** Recommended PCM bytes per send (corrected down on 3007 bad-chunk closes). */
+  get chunkSizeBytes(): number {
+    return this.chunkBytes;
+  }
+
   /** Open the WebSocket connection. Audio can be fed once `open` fires. */
   connect(): Promise<void> {
-    let ws!: WebSocket;
+    let ws!: WsLike;
     return new Promise((resolve, reject) => {
       if (this.ws) {
         reject(new Error("RealtimeStream already connected."));
@@ -103,9 +134,9 @@ export class RealtimeStream extends EventEmitter {
       // raw API key goes in the upgrade header (no Bearer prefix per docs).
       if (this.authToken) {
         const urlWithToken = `${url}&token=${encodeURIComponent(this.authToken)}`;
-        ws = new WebSocket(urlWithToken);
+        ws = this.wsFactory(urlWithToken);
       } else {
-        ws = new WebSocket(url, {
+        ws = this.wsFactory(url, {
           headers: { authorization: this.config.assemblyai.apiKey },
         });
       }
@@ -216,6 +247,29 @@ export class RealtimeStream extends EventEmitter {
     this._state = "closed";
   }
 
+  /**
+   * Check that the server actually gave us the model we asked for.
+   *
+   * Getting `speech_model` wrong (sending the pre-recorded API's plural
+   * `speech_models`, or a model string with a typo) does not fail the
+   * connection — the socket opens and transcribes with whatever the server
+   * picked. Since the Pro-only features the agent loop depends on
+   * (`agent_context`, `SpeechStarted`, `mode`) then silently do nothing, the
+   * `Begin.configuration` echo is the only signal that anything is wrong.
+   * See docs/DECISIONS.md §1.
+   */
+  private verifyServedModel(begin: BeginMessage): void {
+    const served = begin.configuration?.model;
+    const requested = this.params.speechModel;
+    if (typeof served !== "string" || served === requested) return;
+    this.emit(
+      "warn",
+      `AssemblyAI is serving "${served}" but "${requested}" was requested. ` +
+        `Features specific to the requested model will silently not apply. ` +
+        `Check the speech_model parameter (realtime uses the singular form).`,
+    );
+  }
+
   /** Force-close without waiting (only for error paths). */
   destroy(): void {
     if (this.closeTimer) clearTimeout(this.closeTimer);
@@ -228,7 +282,9 @@ export class RealtimeStream extends EventEmitter {
     this.ws = null;
   }
 
-  private handleMessage(raw: WebSocket.RawData): void {
+  private handleMessage(
+    raw: string | Buffer | Uint8Array | ArrayBuffer,
+  ): void {
     let msg: ServerMessage;
     try {
       msg = JSON.parse(raw.toString()) as ServerMessage;
@@ -240,6 +296,7 @@ export class RealtimeStream extends EventEmitter {
     switch (msg.type) {
       case "Begin":
         this.begin = msg;
+        this.verifyServedModel(msg);
         this.emit("begin", msg);
         break;
       case "SpeechStarted":
@@ -254,6 +311,7 @@ export class RealtimeStream extends EventEmitter {
       case "SpeakerRevision":
         this.emit("speakerRevision", {
           revisions: msg.revisions,
+          turnOrders: msg.revisions.map((r) => r.turn_order),
         } satisfies SpeakerRevisionEvent);
         break;
       case "LLMGatewayResponse":
@@ -274,11 +332,27 @@ export class RealtimeStream extends EventEmitter {
     if (code === RealtimeCloseCode.TooManySessions) {
       this.emit("error", new Error("Too many concurrent realtime sessions (3009)."));
     } else if (code === RealtimeCloseCode.BadAudioChunk) {
-      this.emit("error", new Error("Audio chunk outside 50-1000ms or faster than real-time (3007)."));
+      // 3007 = chunk outside 50–1000 ms (or faster than real time). Shrink the
+      // recommended chunk size toward the 50 ms floor so the caller re-feeds at
+      // a valid size instead of crashing the session.
+      const floor = Math.max(64, Math.floor(this.params.sampleRate / 10));
+      const corrected = Math.max(floor, Math.floor(this.chunkBytes / 2));
+      this.emit("warn", `Server rejected audio chunk (3007); reducing chunk size to ${corrected} bytes.`);
+      this.chunkBytes = corrected;
+      this.emit(
+        "error",
+        new Error(
+          `Audio chunk outside 50-1000ms or faster than real-time (3007); chunk size corrected to ${corrected} bytes.`,
+        ),
+      );
     } else if (code === RealtimeCloseCode.Unauthorized) {
       this.emit("error", new Error("Unauthorized realtime session (1008)."));
     } else if (code === RealtimeCloseCode.SessionExpired) {
       this.emit("error", new Error("Realtime session expired after 3-hour cap (3008)."));
+    } else if (code === RealtimeCloseCode.SessionCancelled) {
+      this.emit("error", new Error("Session cancelled on the server (3005)."));
+    } else if (code === RealtimeCloseCode.InvalidMessage) {
+      this.emit("error", new Error("Invalid message / inactivity timeout (3006)."));
     }
 
     this.emit("close", { code, reason: reasonText });
@@ -293,7 +367,7 @@ function normalizeTurn(msg: TurnMessage): TurnEvent {
     transcript: msg.transcript,
     endOfTurnConfidence: msg.end_of_turn_confidence,
     words: msg.words,
-    utterance: msg.utterance,
+    utterance: msg.utterance ?? null,
     speakerLabel: msg.speaker_label,
     languageCode: msg.language_code,
     languageConfidence: msg.language_confidence,
