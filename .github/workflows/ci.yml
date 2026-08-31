@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+# A newer push to the same branch makes an in-flight run obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # `ci` (not `install`) so the lockfile is authoritative and a drifting
+      # transitive dependency fails the build instead of silently changing it.
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # NOTE: `npm run format:check` is deliberately not a gate yet — 52 files
+      # predate Prettier being wired up and fail it. Run `npm run format` as a
+      # standalone commit, then add the check here; gating on a check that is
+      # already red trains people to ignore CI.
+
+      # Builds every workspace. The e2e suite consumes the other packages
+      # through their published `dist/`, so this has to happen before tests.
+      - name: Build
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      # The full mocked-call loop: real device-manager, aai-client, pipeline,
+      # orchestrator and agent, with adb, the A2I WebSocket, scrcpy, the LLM
+      # and TTS stubbed. Needs no device, no API key and no network.
+      - name: End-to-end tests
+        run: npm run test:e2e
