@@ -1,0 +1,21 @@
+{
+  "name": "neuracall",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-device AI voice agent that wirelessly hijacks physical smartphones to handle real cellular and WhatsApp calls simultaneously.",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "dev:desktop": "npm run dev -w @neuracall/desktop",
+    "build:desktop": "npm run build -w @neuracall/desktop"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
