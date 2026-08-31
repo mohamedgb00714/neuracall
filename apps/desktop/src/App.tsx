@@ -2,12 +2,15 @@ import { useEffect, useState } from "react";
 import { StatusBar } from "./components/StatusBar";
 import { DevicePanel } from "./components/DevicePanel";
 import { TranscriptView } from "./components/TranscriptView";
+import { ToolsNotice } from "./components/ToolsNotice";
 import { useLiveTranscript } from "./hooks/useLiveTranscript";
 
 export interface ConfigInfo {
   region: string;
   speechModel: string;
   ready: boolean;
+  /** Set when the main process could not start the runtime (e.g. missing API key). */
+  error: string | null;
 }
 
 /**
@@ -25,7 +28,9 @@ export function App() {
     window.neuracall
       ?.getConfigInfo()
       .then((info) => {
-        if (!cancelled) setConfig(info);
+        if (cancelled) return;
+        setConfig(info);
+        if (!info.ready && info.error) setConfigError(info.error);
       })
       .catch((err) => {
         if (!cancelled) setConfigError(String(err));
@@ -38,6 +43,7 @@ export function App() {
   return (
     <div className="app">
       <StatusBar config={config} configError={configError} />
+      <ToolsNotice />
       <main className="layout">
         <aside className="sidebar">
           <DevicePanel />

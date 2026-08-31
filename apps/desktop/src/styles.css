@@ -243,3 +243,130 @@ h2 {
   color: var(--text-dim);
   margin: 2px 0;
 }
+
+/* ---- required-tool (adb / scrcpy) install notice ---- */
+.tool-notice {
+  margin: 8px 12px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.tool-missing {
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg-panel));
+}
+
+.tool-error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.tool-ready {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-color: var(--accent-dim);
+  color: var(--text-dim);
+}
+
+.tool-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.tool-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.tool-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.tool-actions button {
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tool-actions button:hover {
+  border-color: var(--accent-dim);
+}
+
+.tool-guide {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* ---- call control ---- */
+.call-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.call-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.call-input:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+
+.btn-answer {
+  background: var(--accent-dim);
+  color: #fff;
+}
+
+.call-msg {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.call-err {
+  color: var(--danger);
+}
+
+.capture-badge {
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.phase-incoming {
+  color: var(--warn);
+}
+
+.phase-in-call {
+  color: var(--accent);
+}

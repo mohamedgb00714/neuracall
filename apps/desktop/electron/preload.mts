@@ -25,6 +25,42 @@ interface DeviceMsg {
   updatedAt: number;
 }
 
+interface ToolStatusMsg {
+  tool: "adb" | "scrcpy";
+  installed: boolean;
+  binary: string;
+  platform: string;
+  path: string | null;
+  version: string | null;
+  installGuide: string | null;
+}
+
+interface OkResult {
+  ok: boolean;
+  error?: string;
+}
+
+interface CaptureMsg {
+  deviceId: string;
+  channelId: string;
+  endpoint: string;
+  source: string;
+  attachedAt: number;
+  state?: "started" | "exited";
+  exitCode?: number | null;
+  signal?: string | null;
+}
+
+type CallState = "idle" | "ringing" | "offhook" | "unknown";
+
+function subscribe<T>(channel: string) {
+  return (cb: (msg: T) => void) => {
+    const listener = (_e: unknown, msg: T) => cb(msg);
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  };
+}
+
 /**
  * Secure bridge exposed to the renderer. The renderer never holds the
  * AssemblyAI API key — it only receives event streams and issues call control
@@ -35,12 +71,13 @@ const api = {
     region: string;
     speechModel: string;
     ready: boolean;
+    error: string | null;
   }> => ipcRenderer.invoke("config:getInfo"),
 
-  startSession: (deviceId: string, channelId: string) =>
-    ipcRenderer.invoke("session:start", { deviceId, channelId }),
+  startSession: (deviceId: string, channelId: string, source?: string): Promise<OkResult> =>
+    ipcRenderer.invoke("session:start", { deviceId, channelId, source }),
 
-  stopSession: (deviceId: string, channelId: string) =>
+  stopSession: (deviceId: string, channelId: string): Promise<OkResult> =>
     ipcRenderer.invoke("session:stop", { deviceId, channelId }),
 
   feedAudio: (deviceId: string, channelId: string, chunk: Uint8Array) => {
@@ -57,33 +94,37 @@ const api = {
 
   listDevices: (): Promise<DeviceMsg[]> => ipcRenderer.invoke("devices:list"),
 
-  reconnectDevices: (): Promise<{ ok: boolean }> =>
+  reconnectDevices: (): Promise<OkResult> =>
     ipcRenderer.invoke("devices:reconnect"),
 
-  onDevicesChange: (cb: (msg: DeviceMsg) => void) => {
-    const listener = (_e: unknown, msg: DeviceMsg) => cb(msg);
-    ipcRenderer.on("devices:update", listener);
-    return () => ipcRenderer.removeListener("devices:update", listener);
-  },
+  // ---- external tools
+  checkTools: (): Promise<{ adb: ToolStatusMsg; scrcpy: ToolStatusMsg }> =>
+    ipcRenderer.invoke("tools:check"),
+  checkScrcpy: (): Promise<ToolStatusMsg> => ipcRenderer.invoke("scrcpy:check"),
+  checkAdb: (): Promise<ToolStatusMsg> => ipcRenderer.invoke("adb:check"),
 
-  onTurn: (cb: (msg: TurnMsg) => void) => {
-    const listener = (_e: unknown, msg: TurnMsg) => cb(msg);
-    ipcRenderer.on("session:turn", listener);
-    return () => ipcRenderer.removeListener("session:turn", listener);
-  },
+  // ---- call control
+  dialNumber: (deviceId: string, number: string): Promise<OkResult> =>
+    ipcRenderer.invoke("call:dial", { deviceId, number }),
+  openDialer: (deviceId: string, number?: string): Promise<OkResult> =>
+    ipcRenderer.invoke("call:openDialer", { deviceId, number }),
+  answerCall: (deviceId: string): Promise<OkResult> =>
+    ipcRenderer.invoke("call:answer", { deviceId }),
+  hangUpCall: (deviceId: string): Promise<OkResult> =>
+    ipcRenderer.invoke("call:hangup", { deviceId }),
+  getCallState: (deviceId: string): Promise<{ ok: boolean; state: CallState; error?: string }> =>
+    ipcRenderer.invoke("call:state", { deviceId }),
 
-  onSessionEnd: (cb: (msg: SessionEndMsg) => void) => {
-    const listener = (_e: unknown, msg: SessionEndMsg) => cb(msg);
-    ipcRenderer.on("session:end", listener);
-    return () => ipcRenderer.removeListener("session:end", listener);
-  },
+  captureStatus: (): Promise<CaptureMsg[]> => ipcRenderer.invoke("capture:status"),
 
-  onError: (cb: (msg: { key: unknown; error: string }) => void) => {
-    const listener = (_e: unknown, msg: { key: unknown; error: string }) =>
-      cb(msg);
-    ipcRenderer.on("session:error", listener);
-    return () => ipcRenderer.removeListener("session:error", listener);
-  },
+  // ---- event streams
+  onDevicesChange: subscribe<DeviceMsg>("devices:update"),
+  onCallStateChange: subscribe<{ id: string; state: CallState }>("call:state-change"),
+  onCapture: subscribe<CaptureMsg>("capture:update"),
+  onCaptureLog: subscribe<{ id: string; line: string; isError: boolean }>("capture:log"),
+  onTurn: subscribe<TurnMsg>("session:turn"),
+  onSessionEnd: subscribe<SessionEndMsg>("session:end"),
+  onError: subscribe<{ key: unknown; error: string }>("session:error"),
 };
 
 contextBridge.exposeInMainWorld("neuracall", api);
