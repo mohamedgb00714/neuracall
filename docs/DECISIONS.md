@@ -179,6 +179,44 @@ re-verify against §1–§7 before assuming a bug is ours.
 Should we later prefer the SDK, pin `assemblyai@^4.37.0`; the migration is
 `RealtimeStream` only, since nothing above it touches the wire format.
 
+## 10. The Voice Agent is a second pipeline, not a replacement
+
+AssemblyAI's Voice Agent API (`wss://agents.assemblyai.com/v1/ws`) does
+transcription, the language model and synthesis inside one socket, on the same
+account key. NeuraCall supports it **alongside** the composed
+STT + LLM + TTS path rather than instead of it.
+
+Keeping both is deliberate. The Voice Agent is the only configuration that can
+answer a call with no credential beyond the AssemblyAI key, which is what makes
+a default install useful; the composed path is what you want when the model
+matters, when you need a specific frontier model, or when the voice you need is
+not among the sixteen the service offers (there is no Arabic voice, which is a
+real constraint for this deployment).
+
+Two properties of the integration are load-bearing and easy to lose in a
+refactor:
+
+**It plugs into the seams that already existed.** `VoiceAgentBridge` implements
+`SttSessionManager` and exposes a `CallAgent`, so the `Orchestrator` is
+unchanged — the state machine, hang-up watch, recording, persistence and
+post-call analysis all still run. Rewriting the orchestrator around a
+speech-to-speech loop would have forked all of that.
+
+**The reply audio is streamed to the injector, not returned through
+`AgentReply.audio`.** The orchestrator awaits `onFinalTurn` before it plays
+anything, so returning the audio would mean buffering an entire reply first and
+the caller would hear a ten-second answer ten seconds late. `onFinalTurn`
+returns text only. As a consequence the reply never passes through
+`LocalOutStream`, so its `isSpeaking` is always false and the orchestrator's own
+barge-in check cannot fire — the bridge flushes the injector on the server's
+`speechStarted` instead, which is the better signal anyway.
+
+Two API constraints, both verified against the live service and both of which
+present as something other than what they are, are in
+[VOICE-AGENT.md](VOICE-AGENT.md): input is **24 kHz only** (any other rate fails
+as `internal_error`, mentioning nothing about audio), and a BYO-LLM block is
+rejected on `session.update` and works only on a stored agent.
+
 ## 9. Deprecated — do not use
 
 - **V2 streaming** (`/v2/realtime/ws`): retired; closes with 410.

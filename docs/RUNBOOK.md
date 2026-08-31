@@ -123,6 +123,55 @@ id (find it with `lsusb`).
 3. `adb connect <ip>:<connect-port>` — note this is a *different* port from the
    pairing one, shown on the main Wireless debugging screen.
 
+**No screen lock.** Placing a call through a messaging app is UI automation, and
+UI automation does nothing on a phone behind a keyguard: taps land on the lock
+screen, `uiautomator dump` describes the lock screen, and the call is simply
+never placed — with no error anywhere. NeuraCall wakes the phone and dismisses an
+*insecure* keyguard itself, but a PIN, pattern or password cannot be cleared by
+adb without the credential, so it reports that instead of pretending. Remove the
+screen lock on any handset NeuraCall drives.
+
+### 3a. Bluetooth HFP — the injection transport
+
+This is what lets the caller hear the agent. It is the one step that cannot be
+scripted: Bluetooth pairing requires a confirmation tap on the handset.
+
+The host pairs to the phone as a **hands-free unit** (the role a headset plays),
+so the phone routes the call's audio to the host and accepts audio back — both
+directions, which is exactly what a call needs and what scrcpy cannot give you.
+
+Check the host can do it at all:
+
+```bash
+rfkill unblock bluetooth
+bluetoothctl show | grep -E 'Powered|UUID: Handsfree'
+```
+
+You need `Powered: yes` and a **`UUID: Handsfree`** line. That UUID is the HF
+role; without it the adapter can only be an audio *sink* (A2DP), which carries
+music from the phone but has no microphone path and so cannot carry a call.
+On PipeWire this comes from the `libspa-0.2-bluetooth` package.
+
+Then pair, from the host:
+
+```bash
+bluetoothctl
+> agent on
+> default-agent
+> scan on          # note the phone's MAC, then: scan off
+> pair <MAC>       # confirm the matching code ON THE PHONE
+> trust <MAC>      # so it reconnects by itself after a reboot
+> connect <MAC>
+```
+
+On the phone, in the paired device's settings, make sure **Phone calls** (or
+"Call audio") is enabled for the host — some Android builds pair with media
+only, which looks connected and still routes call audio to the earpiece.
+
+With a call in progress the host should show a Bluetooth source and sink; point
+`NEURACALL_INJECT_SINK` at the sink. If the sink only appears *during* a call,
+that is normal: the SCO link is set up per call, not held open.
+
 ## 4. Startup order
 
 The order matters: the build has to finish before anything imports a package,
@@ -301,8 +350,31 @@ Launch it (section 4) and check, in order:
 Known app limitations worth knowing before you report a bug: the
 `cellular`/`whatsapp` channels are labels for separate STT sessions; there is
 **one scrcpy capture per phone**, so pressing Listen on a second channel of the
-same phone opens a session with no audio; there is no audio-source picker in
-the UI; and nothing is spoken back to the phone.
+same phone opens a session with no audio; and there is no audio-source picker in
+the UI. Whether anything is spoken back to the phone depends on section 3a —
+the agent's voice is generated either way, but without an injection transport it
+has nowhere to go.
+
+### 5e. `scripts/live-voice-agent.mjs` — does the agent actually speak?
+
+Answers the speech half of "the caller cannot hear the agent" without involving
+a phone at all. It uses the product's own client against the real service, and
+because the host usually has no local TTS, it has a throwaway agent *speak* the
+caller's line and streams that back in as if it were a caller.
+
+```bash
+node scripts/live-voice-agent.mjs            # add --keep-audio to save the reply
+```
+
+It creates two temporary agents and deletes both on the way out, including after
+a failure. Every check should pass; a failure here is a key, entitlement or
+network problem, not a phone problem.
+
+Two numbers it reports are easy to confuse. The generation figure (~10 ms) is
+the model plus synthesis, measured from the moment the service declares the turn
+over. What a caller *perceives* is that plus the end-of-turn silence window —
+about 1.5 s on the defaults. Lowering the window trades that latency against
+cutting off callers who pause mid-sentence.
 
 ## 6. Production Wi-Fi
 
@@ -353,7 +425,7 @@ Keyed by what you actually see, not by what is broken.
 | **Close 3009** | Too many concurrent sessions for the account | The session manager bounds concurrency and queues FIFO rather than racing into a rejection, but your *account* limit may be lower than the local bound. Stop unused sessions. |
 | **Close 3008** | The 3-hour session cap, or a temp token's max duration | Expected on very long calls. Open a fresh session. |
 | **A session still seems to be billing after a crash** | The socket was dropped without `Terminate` | Billing is **wall-clock connection time**, not audio duration. Normal exits always Terminate — Stop, window close, app quit, and every orchestrator teardown path. A `SIGKILL`ed process cannot, so the session runs to AssemblyAI's inactivity timeout or the 3-hour cap. Prefer closing the window; check the dashboard if you killed it hard. |
-| **The caller cannot hear the agent** | **Expected today.** There is no TTS implementation (only `SilentTts`), and injection needs a transport | This is not a bug to file. See [AUDIO-ABI.md](AUDIO-ABI.md) and the README's capability table. To get audio to the far end you need Bluetooth HFP, an on-device helper app, or acoustic coupling — plus a real `TtsClient`. |
+| **The caller cannot hear the agent** | Either nothing is generating speech, or there is no transport carrying it to the call — two separate causes that look identical | Check which. Speech: with the Voice Agent on (Settings → Voice Agent) AssemblyAI supplies the reply *and* the voice on the key you already have, so no LLM or TTS credential is needed; on the composed path a missing `LLM_API_KEY` or TTS provider leaves `SilentTts` in place. Transport: injection still needs Bluetooth HFP (section 3a), an on-device helper app, or acoustic coupling. `node scripts/live-voice-agent.mjs` proves the speech half without a phone. See [VOICE-AGENT.md](VOICE-AGENT.md) and [AUDIO-ABI.md](AUDIO-ABI.md). |
 | **The agent answers its own last sentence** | A duplex capture source (`voice-call`, `mic`, `output`) is feeding the agent's own voice back into STT | Move to `voice-call-downlink` if the phone allows it. Otherwise gate `remoteIn` while `localOut.isSpeaking`, or lean on `agent_context` biasing plus barge-in to discard turns that echo what the agent just said. |
 | **`npm run typecheck` fails in `apps/desktop` after editing a package** | Consumers resolve packages through their built `dist/` | `npm run build -w @neuracall/<pkg>` (or `npm run build`) first. |
 | **scrcpy `ERROR` / `WARN` lines in the app log** | Forwarded verbatim from scrcpy | `Audio capture failed` / `Could not configure audio` → the source is unsupported here; try the next one. `device disconnected` → the adb transport dropped; see the wireless notes. |

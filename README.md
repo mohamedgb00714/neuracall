@@ -23,16 +23,22 @@ Be straight about this before you plan anything around it.
 | Live transcript, per phone and per channel | **Works** (desktop app) |
 | Record the call to a WAV + JSON sidecar as it happens | **Works** (library; not wired into the desktop app) |
 | Think: LLM reply per finished caller turn, with barge-in cancellation | **Works** (library; OpenAI-compatible / OpenRouter by default) |
-| Speak: turn that reply into audio | **Not implemented.** `TtsClient` is a port; the only implementation is `SilentTts` |
+| Speak: turn that reply into audio | **Works** via the AssemblyAI Voice Agent — transcription, reply and voice over one socket on the key you already have. On the composed path, `TtsClient` still needs a provider or it stays `SilentTts` |
 | **Make the caller hear it** | **Needs a transport you set up yourself** — see below |
-| Desktop app running the full answer→reply loop | **Not wired.** The app does devices + call control + capture + transcript |
-| CRM / contacts / SQLite history | **Not started** |
+| Desktop app running the full answer→reply loop | **Works**, opt-in. Autopilot is off until an operator turns it on, and answers inbound calls only |
+| CRM / contacts / SQLite history | **Works** where SQLite exists; falls back to append-only JSONL on runtimes without `node:sqlite` |
 
 ### The limitation that matters
 
-NeuraCall can listen, transcribe, think and record. It cannot yet make the
-person on the other end **hear** the agent, and that is not a missing function
-call — it is an Android platform problem.
+NeuraCall can listen, transcribe, think, speak and record. What it cannot do on
+its own is make the person on the other end **hear** the agent, and that is not
+a missing function call — it is an Android platform problem.
+
+The distinction matters because the two halves fail identically from the
+outside. Generating speech is solved: turn on the Voice Agent
+([docs/VOICE-AGENT.md](docs/VOICE-AGENT.md)) and `node scripts/live-voice-agent.mjs`
+will hold a full conversation against the real service, with no extra
+credentials. Getting that audio into a live call is the part below.
 
 `scrcpy` is a capture and control tool. No `--audio-source` value plays audio
 *into* a call, and there is no supported way for an adb-shell process to write
