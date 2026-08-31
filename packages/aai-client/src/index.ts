@@ -5,3 +5,5 @@ export * from "./token.js";
 export * from "./backoff.js";
 export * from "./prerecorded.js";
 export * from "./llmGateway.js";
+export * from "./voiceAgent.js";
+export * from "./voiceAgentAdmin.js";

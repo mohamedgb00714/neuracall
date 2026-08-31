@@ -13,6 +13,16 @@ export function testConfig(): AppConfig {
       tokenUrl: "https://127.0.0.1/v3/token",
       speechModel: "universal-3-5-pro",
     },
+    voiceAgent: {
+      enabled: false,
+      voice: "alba",
+      // Pinned by the API, not by this fixture: anything but 24000 is accepted
+      // at create time and then fails at session start as "internal_error".
+      sampleRate: 24000,
+      restBaseUrl: "https://agents.assemblyai.com/v1",
+      wsUrl: "wss://127.0.0.1/v1/ws", // host is irrelevant: the wsFactory is injected
+      tokenUrl: "https://agents.assemblyai.com/v1/token",
+    },
     llm: { model: "test" },
     tts: { model: "test" },
   };
