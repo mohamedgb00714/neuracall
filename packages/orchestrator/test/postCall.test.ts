@@ -419,10 +419,22 @@ test("a store that throws does not lose the analysis or reject", async (t) => {
  * before it uploads, so "has the next call started" is several ticks away, not
  * one — polling keeps the assertion about ordering rather than about timing.
  */
-async function waitFor(ready: () => boolean, ticks = 100): Promise<void> {
-  for (let i = 0; i < ticks; i += 1) {
+/**
+ * Wait for a condition, bounded by wall-clock time rather than by event-loop
+ * turns.
+ *
+ * A `setImmediate` budget looks equivalent and is not: what this waits on is
+ * real work (reading a WAV off disk, then the queue picking up the next job),
+ * and on a loaded machine a hundred immediate-ticks can drain in well under a
+ * millisecond while that work has not even started. That made this suite fail
+ * roughly one run in four when the CPU was busy — which is precisely when CI
+ * runs it — and pass every time in isolation.
+ */
+async function waitFor(ready: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     if (ready()) return;
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 1));
   }
-  assert.fail("condition never became true");
+  assert.fail(`condition never became true within ${timeoutMs}ms`);
 }
