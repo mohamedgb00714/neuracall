@@ -250,8 +250,10 @@ test("an idle device reports no VoIP call even after a past WhatsApp call", () =
   const dump = AUDIO_IDLE.join("\n");
   assert.equal(parseAudioMode(dump), "normal");
   assert.equal(isVoipCallActive(dump), false);
-  // The owner is still named by the log; the mode is what gates the decision.
-  assert.equal(parseAudioModeOwner(dump), "com.whatsapp.w4b");
+  // An idle device names NO owner. Reporting the last package from the event
+  // log here is what made a finished call look like a live one on real
+  // hardware — the log keeps every past transition forever.
+  assert.equal(parseAudioModeOwner(dump), "");
 });
 
 test("audio mode falls back to the last setMode entry when no mode field exists", () => {
@@ -409,6 +411,60 @@ test("an idle device with a calling app merely open is not a call", async () => 
     ["  mFocusedApp=ActivityRecord{1 u0 org.telegram.messenger/.Main} t1 d0}"],
     NO_CALL_DUMP,
     NO_CALL_DUMP,
+  ]);
+  assert.deepEqual(await new AdbCallChannelDetector(runner).detect("SERIAL"), {
+    present: false,
+    channel: null,
+  });
+});
+
+// --- the stale-audio-log false positive, from real hardware ------------------
+
+/**
+ * Verbatim shape from the realme RMX3624 just after a WhatsApp call ended:
+ * the current mode carries a parenthetical qualifier and no MODE_ prefix,
+ * while the event log below still holds every past transition.
+ */
+const RMX3624_AUDIO_AFTER_CALL = [
+  "Audio Mode dump:",
+  "- mode (internal) = NORMAL",
+  "- mode (external) = NORMAL",
+  "- Mode owner: ",
+  "- Mode owner stack: ",
+  "Audio mode events:",
+  "08-31 14:40:01:496 setMode(MODE_IN_COMMUNICATION) from package=com.whatsapp.w4b pid=21819",
+  "08-31 20:55:48:086 setMode(MODE_IN_COMMUNICATION) from package=com.whatsapp.w4b pid=26351",
+].join("\n");
+
+const RMX3624_AUDIO_DURING_CALL = [
+  "Audio Mode dump:",
+  "- mode (internal) = MODE_IN_COMMUNICATION",
+  "- Mode owner: pid=26351 uid=10185 package=com.whatsapp.w4b",
+  "Audio mode events:",
+  "08-31 20:55:48:086 setMode(MODE_IN_COMMUNICATION) from package=com.whatsapp.w4b pid=26351",
+].join("\n");
+
+test("a call that has ended is not reported as ongoing from the setMode log", () => {
+  // Observed live: `- mode (internal) = NORMAL` matched none of the mode
+  // patterns, so parsing fell through to the event log and reported a call
+  // that had already been hung up.
+  assert.equal(parseAudioMode(RMX3624_AUDIO_AFTER_CALL), "normal");
+  assert.equal(parseAudioModeOwner(RMX3624_AUDIO_AFTER_CALL), "");
+  assert.equal(isVoipCallActive(RMX3624_AUDIO_AFTER_CALL), false);
+});
+
+test("a live call is still detected, with its owning package", () => {
+  assert.equal(parseAudioMode(RMX3624_AUDIO_DURING_CALL), "in_communication");
+  assert.equal(parseAudioModeOwner(RMX3624_AUDIO_DURING_CALL), "com.whatsapp.w4b");
+  assert.equal(isVoipCallActive(RMX3624_AUDIO_DURING_CALL), true);
+});
+
+test("the detector reports no call on a device that merely made one earlier", async () => {
+  const runner = stubRunner([
+    TEL_IDLE,
+    RMX3624_AUDIO_AFTER_CALL.split("\n"),
+    ["(no mResumedActivity on this OEM)"],
+    ["  mFocusedApp=ActivityRecord{1 u0 com.android.launcher/.Launcher} t9 d0}"],
   ]);
   assert.deepEqual(await new AdbCallChannelDetector(runner).detect("SERIAL"), {
     present: false,

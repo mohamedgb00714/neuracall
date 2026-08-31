@@ -222,10 +222,29 @@ export function isWhatsAppPackage(pkg: string): boolean {
  * OEM: `Audio mode:`, `- Current mode =` and a `setMode(...)` event log have
  * all been seen on devices this runs against.
  */
+/**
+ * Fields that state the CURRENT audio mode.
+ *
+ * The third pattern is not hypothetical tolerance: this handset prints
+ * `- mode (internal) = NORMAL` — a parenthetical qualifier, and the bare name
+ * without the `MODE_` prefix. Neither of the first two matches it, so parsing
+ * fell through to the `setMode` event log and reported a call that had already
+ * ended, because the log keeps every past transition. A stale
+ * MODE_IN_COMMUNICATION reads as "a call is in progress" forever.
+ */
 const AUDIO_MODE_PATTERNS: readonly RegExp[] = [
   /(?:^|\n)[\s-]*(?:Audio\s+)?mode\s*[:=]\s*(MODE_[A-Z_]+)/i,
   /(?:Current|Actual|Requested)\s+mode\s*[:=]\s*(MODE_[A-Z_]+)/i,
+  /(?:^|\n)[\s-]*mode\s*(?:\([a-z]+\))?\s*[:=]\s*((?:MODE_)?[A-Z_]+)/,
 ];
+
+/**
+ * The current mode owner, printed as its own field on builds that have one.
+ * Authoritative even when empty — an empty `Mode owner:` means nobody owns the
+ * mode right now, which must NOT be overridden by a package name scraped from
+ * the historical log below.
+ */
+const CURRENT_OWNER_PATTERN = /(?:^|\n)[\s-]*Mode owner\s*[:=][ \t]*([^\n]*)/i;
 
 /** `setMode` entries in the phone-state event log, oldest first. */
 const SET_MODE_PATTERN = /setMode\((?:mode=)?(MODE_[A-Z_]+)\)/g;
@@ -241,8 +260,19 @@ const MODE_OWNER_PATTERN =
 /** Lines worth scanning for the owner: those that talk about the mode at all. */
 const MODE_LINE_PATTERN = /mode\s+owner|setMode\(|MODE_[A-Z_]+/i;
 
+/** A bare package name in a free-text field, or "" when there is none. */
+function extractPackage(text: string): string {
+  return text.match(/\b[a-z][a-z0-9_]*(?:\.[a-z0-9_]+){2,}\b/i)?.[0] ?? "";
+}
+
 function toAudioMode(raw: string): AudioMode {
-  switch (raw.toUpperCase()) {
+  // Some builds print the bare name ("NORMAL") rather than the constant
+  // ("MODE_NORMAL"). Both must resolve, or a recognised mode is reported as
+  // "unknown" and the caller falls back to the stale event log.
+  const normalised = raw.toUpperCase().startsWith("MODE_")
+    ? raw.toUpperCase()
+    : `MODE_${raw.toUpperCase()}`;
+  switch (normalised) {
     case "MODE_NORMAL":
       return "normal";
     case "MODE_RINGTONE":
@@ -273,11 +303,25 @@ export function parseAudioModeState(dump: string): AudioModeState {
       break;
     }
   }
-  if (mode === "unknown") {
+  // The event log is a LAST resort. It records every transition ever made, so
+  // its final entry is the last mode the device was *ever* in, not the mode it
+  // is in now — using it while a current-mode field exists reports calls that
+  // ended minutes ago.
+  const hasCurrentMode = mode !== "unknown";
+  if (!hasCurrentMode) {
     for (const match of dump.matchAll(SET_MODE_PATTERN)) {
       const raw = match[1];
       if (raw) mode = toAudioMode(raw);
     }
+  }
+
+  // A device that is not in a call has no owner, whatever the log remembers.
+  if (mode === "normal") return { mode, owner: "" };
+
+  const currentOwnerField = dump.match(CURRENT_OWNER_PATTERN);
+  if (currentOwnerField) {
+    const stated = currentOwnerField[1] ?? "";
+    return { mode, owner: stated.match(MODE_OWNER_PATTERN)?.[1] ?? extractPackage(stated) };
   }
 
   let owner = "";
