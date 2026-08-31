@@ -2,13 +2,16 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync }
 import { dirname } from "node:path";
 import {
   DEFAULT_SPEECH_MODEL,
+  DEFAULT_VOICE_AGENT_VOICE,
   REGIONS,
+  VOICE_AGENT_SAMPLE_RATE,
   endpointsForRegion,
+  voiceAgentEndpointsForRegion,
   type AppConfig,
   type Region,
 } from "@neuracall/config";
 import { selectTtsClient } from "@neuracall/agent";
-import type { RealtimeMode } from "@neuracall/aai-client";
+import { VOICE_IDS, type RealtimeMode } from "@neuracall/aai-client";
 import type { ScrcpyAudioSource } from "@neuracall/scrcpy-bridge";
 
 /**
@@ -27,6 +30,28 @@ export interface NeuraCallSettings {
     mode: RealtimeMode;
     /** Terms biasing recognition (brand names, SKUs). Max 100. */
     keyterms: string[];
+  };
+  /**
+   * AssemblyAI's Voice Agent API: one socket in place of the llm and tts
+   * sections below, authenticated by the AssemblyAI key the app already
+   * requires. It therefore holds no secret of its own, which is why it is the
+   * one section that survives redaction untouched.
+   */
+  voiceAgent: {
+    /** Off unless asked for: turning it on bypasses llm and tts entirely. */
+    enabled: boolean;
+    /**
+     * uuid of an agent stored via POST /v1/agents; "" configures one inline
+     * from the fields below. Never both — a session carrying an agent_id *and*
+     * inline fields is rejected, so a stored agent wins and the rest is unused.
+     */
+    agentId: string;
+    /** A voice_id from VOICE_IDS. The catalogue has no Arabic voice. */
+    voice: string;
+    /** The agent's opening line; "" lets it answer rather than open. */
+    greeting: string;
+    /** The agent's persona and instructions; "" keeps the service default. */
+    systemPrompt: string;
   };
   llm: {
     apiKey: string;
@@ -61,10 +86,12 @@ export type TtsProvider = "auto" | "openai" | "elevenlabs" | "command" | "silent
 /**
  * What the renderer is allowed to see. Every `apiKey` is blanked and replaced
  * by a `hasApiKey` flag: the UI needs to know whether a key is stored so it can
- * say so, and never needs the key itself.
+ * say so, and never needs the key itself. `voiceAgent` passes through whole
+ * because nothing in it is a secret.
  */
 export interface RedactedSettings {
   assemblyai: NeuraCallSettings["assemblyai"];
+  voiceAgent: NeuraCallSettings["voiceAgent"];
   llm: NeuraCallSettings["llm"] & { hasApiKey: boolean };
   tts: NeuraCallSettings["tts"] & { hasApiKey: boolean };
   audio: NeuraCallSettings["audio"];
@@ -86,6 +113,7 @@ export type DeepPartial<T> = {
  */
 export interface SettingsPatch {
   assemblyai?: Partial<NeuraCallSettings["assemblyai"]>;
+  voiceAgent?: Partial<NeuraCallSettings["voiceAgent"]>;
   llm?: Partial<Omit<NeuraCallSettings["llm"], "apiKey">> & { apiKey?: string | null };
   tts?: Partial<Omit<NeuraCallSettings["tts"], "apiKey">> & { apiKey?: string | null };
   audio?: Partial<NeuraCallSettings["audio"]>;
@@ -119,6 +147,17 @@ const PROBE_TIMEOUT_MS = 8000;
 const MAX_KEYTERMS = 100;
 /** Per the Universal-Streaming spec; a longer term is rejected by the socket. */
 const MAX_KEYTERM_CHARS = 50;
+
+/**
+ * Spellings a boolean may arrive as, matching the ones `@neuracall/config`
+ * accepts: the same `.env` feeds both, so a variable that works for the
+ * headless runtime has to work here too.
+ */
+const TRUE_SPELLINGS = ["1", "true", "yes", "on"];
+const FALSE_SPELLINGS = ["0", "false", "no", "off"];
+
+/** Canonical 8-4-4-4-12 form — the only shape the agents API issues. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const MODES: readonly RealtimeMode[] = ["min_latency", "balanced", "max_accuracy"];
 const TTS_PROVIDERS: readonly TtsProvider[] = [
@@ -157,6 +196,13 @@ export function defaultSettings(): NeuraCallSettings {
       mode: "balanced",
       keyterms: [],
     },
+    voiceAgent: {
+      enabled: false,
+      agentId: "",
+      voice: DEFAULT_VOICE_AGENT_VOICE,
+      greeting: "",
+      systemPrompt: "",
+    },
     llm: { apiKey: "", model: "", baseUrl: DEFAULT_LLM_BASE_URL, systemPrompt: "", greeting: "" },
     tts: { provider: "auto", apiKey: "", model: "", voice: "", baseUrl: "" },
     audio: { captureSource: "mic", injectSink: "" },
@@ -184,6 +230,7 @@ export function defaultSettings(): NeuraCallSettings {
 export function toRedacted(settings: NeuraCallSettings): RedactedSettings {
   return {
     assemblyai: { ...settings.assemblyai, keyterms: [...settings.assemblyai.keyterms] },
+    voiceAgent: { ...settings.voiceAgent },
     llm: { ...settings.llm, apiKey: "", hasApiKey: settings.llm.apiKey !== "" },
     tts: { ...settings.tts, apiKey: "", hasApiKey: settings.tts.apiKey !== "" },
     audio: { ...settings.audio },
@@ -206,6 +253,7 @@ export function toRedacted(settings: NeuraCallSettings): RedactedSettings {
 export function applyPatch(current: NeuraCallSettings, patch: SettingsPatch): NeuraCallSettings {
   const next = structuredClone(current);
   if (patch.assemblyai) Object.assign(next.assemblyai, patch.assemblyai);
+  if (patch.voiceAgent) Object.assign(next.voiceAgent, patch.voiceAgent);
   if (patch.audio) Object.assign(next.audio, patch.audio);
   if (patch.autopilot) Object.assign(next.autopilot, patch.autopilot);
 
@@ -238,6 +286,7 @@ function mergeSecret(stored: string, incoming: string | null | undefined): strin
 function mergeLayer(base: NeuraCallSettings, layer: SettingsPatch): NeuraCallSettings {
   const next = structuredClone(base);
   if (layer.assemblyai) Object.assign(next.assemblyai, layer.assemblyai);
+  if (layer.voiceAgent) Object.assign(next.voiceAgent, layer.voiceAgent);
   if (layer.audio) Object.assign(next.audio, layer.audio);
   if (layer.autopilot) Object.assign(next.autopilot, layer.autopilot);
 
@@ -276,6 +325,27 @@ export function parseSettingsPatch(raw: unknown): SettingsPatch {
     if ("mode" in aai) section.mode = oneOf(aai["mode"], MODES, "assemblyai.mode");
     if ("keyterms" in aai) section.keyterms = keyterms(aai["keyterms"]);
     patch.assemblyai = section;
+  }
+
+  const voiceAgent = optionalObject(root, "voiceAgent");
+  if (voiceAgent) {
+    const section: SettingsPatch["voiceAgent"] = {};
+    if ("enabled" in voiceAgent) {
+      section.enabled = boolean(voiceAgent["enabled"], "voiceAgent.enabled");
+    }
+    if ("agentId" in voiceAgent) section.agentId = agentId(voiceAgent["agentId"]);
+    // Both of these are rejected by the service at session start, where the
+    // error arrives as a socket close during a call. Cheaper to fail the save.
+    if ("voice" in voiceAgent) {
+      section.voice = oneOf(voiceAgent["voice"], VOICE_IDS, "voiceAgent.voice");
+    }
+    if ("greeting" in voiceAgent) {
+      section.greeting = text(voiceAgent["greeting"], "voiceAgent.greeting");
+    }
+    if ("systemPrompt" in voiceAgent) {
+      section.systemPrompt = text(voiceAgent["systemPrompt"], "voiceAgent.systemPrompt");
+    }
+    patch.voiceAgent = section;
   }
 
   const llm = optionalObject(root, "llm");
@@ -477,6 +547,16 @@ export function settingsFromEnv(env: NodeJS.ProcessEnv): Record<string, unknown>
       mode: clean(env["ASSEMBLYAI_MODE"])?.toLowerCase(),
       keyterms: splitList(env["ASSEMBLYAI_KEYTERMS"]),
     }),
+    voiceAgent: compact({
+      // VOICE_AGENT_ENABLED stays the string it was written as; `boolean()`
+      // decides what "on" means, so a misspelling is rejected out loud instead
+      // of reading as off.
+      enabled: clean(env["VOICE_AGENT_ENABLED"]),
+      agentId: clean(env["VOICE_AGENT_ID"]),
+      voice: clean(env["VOICE_AGENT_VOICE"])?.toLowerCase(),
+      greeting: clean(env["VOICE_AGENT_GREETING"]),
+      systemPrompt: clean(env["VOICE_AGENT_SYSTEM_PROMPT"]),
+    }),
     llm: compact({
       apiKey: clean(env["LLM_API_KEY"]),
       model: clean(env["LLM_MODEL"]),
@@ -511,15 +591,41 @@ export function settingsFromEnv(env: NodeJS.ProcessEnv): Record<string, unknown>
  * the environment (it is required at startup and `@neuracall/config` validates
  * it, so it is the one value the UI cannot supply) with everything else taken
  * from settings. The endpoints are re-derived from the chosen region so no
- * hostname survives a region change.
+ * hostname survives a region change — that includes the Voice Agent hosts,
+ * which live on their own agents.* family and would otherwise keep serving the
+ * previous region's cluster after the operator switched for data residency.
+ *
+ * `voiceAgent` comes from settings like everything else, so the UI is what
+ * turns a speech-to-speech call on. Five of the six VOICE_AGENT_* variables in
+ * .env.example still reach it, but through `settingsFromEnv` seeding the
+ * settings layers — not through getConfig(), which main.ts calls only to lift
+ * the API key out of. The sixth, VOICE_AGENT_LLM_MODEL, has deliberately no
+ * settings field: an inline session rejects an `llm` block, so a model can only
+ * be chosen when creating a stored agent, which happens outside this app.
+ *
+ * agentId, greeting and systemPrompt are spread in only when non-empty. Under
+ * exactOptionalPropertyTypes AppConfig's optionals mean absent, and "" is not
+ * absent: an empty agentId would be sent as an agent_id and rejected, and an
+ * empty greeting would silence the opening line rather than leave it to the
+ * service.
  */
 export function buildAppConfig(assemblyAiKey: string, settings: NeuraCallSettings): AppConfig {
+  const { agentId, greeting, systemPrompt } = settings.voiceAgent;
   return {
     assemblyai: {
       apiKey: assemblyAiKey,
       region: settings.assemblyai.region,
       speechModel: settings.assemblyai.speechModel,
       ...endpointsForRegion(settings.assemblyai.region),
+    },
+    voiceAgent: {
+      enabled: settings.voiceAgent.enabled,
+      voice: settings.voiceAgent.voice,
+      sampleRate: VOICE_AGENT_SAMPLE_RATE,
+      ...(agentId ? { agentId } : {}),
+      ...(greeting ? { greeting } : {}),
+      ...(systemPrompt ? { systemPrompt } : {}),
+      ...voiceAgentEndpointsForRegion(settings.assemblyai.region),
     },
     llm: {
       ...(settings.llm.apiKey ? { apiKey: settings.llm.apiKey } : {}),
@@ -742,6 +848,27 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], path: st
   throw new Error(`${path} must be one of: ${allowed.join(", ")} (got ${JSON.stringify(value)}).`);
 }
 
+/**
+ * A boolean, or one of the `.env` spellings of one — the environment layer is
+ * validated through this same parser and arrives as strings.
+ *
+ * An unrecognised spelling throws rather than falling back, because the
+ * alternative is `VOICE_AGENT_ENABLED=flase` meaning "off" and a feature that
+ * looks like it was never implemented.
+ */
+function boolean(value: unknown, path: string): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const spelling = value.trim().toLowerCase();
+    if (TRUE_SPELLINGS.includes(spelling)) return true;
+    if (FALSE_SPELLINGS.includes(spelling)) return false;
+  }
+  throw new Error(
+    `${path} must be true or false, or one of: ${[...TRUE_SPELLINGS, ...FALSE_SPELLINGS].join(", ")} ` +
+      `(got ${JSON.stringify(value)}).`,
+  );
+}
+
 function text(value: unknown, path: string): string {
   if (typeof value !== "string") throw new Error(`${path} must be a string.`);
   return value.trim();
@@ -790,6 +917,24 @@ function countryCode(value: unknown): string {
     throw new Error(`autopilot.defaultCountryCode must be a calling code like "1" or "+212".`);
   }
   return trimmed.replace(/^\+/, "");
+}
+
+/**
+ * A stored agent's uuid, or "" for an inline one.
+ *
+ * Checked here because a typo'd id is not caught until session start, where it
+ * surfaces as a server error mid-call rather than as anything naming the field.
+ */
+function agentId(value: unknown): string {
+  const trimmed = text(value, "voiceAgent.agentId");
+  if (trimmed === "") return trimmed;
+  if (!UUID_PATTERN.test(trimmed)) {
+    throw new Error(
+      `voiceAgent.agentId must be the uuid of a stored agent, or "" to configure one inline ` +
+        `(got ${JSON.stringify(value)}).`,
+    );
+  }
+  return trimmed;
 }
 
 function keyterms(value: unknown): string[] {

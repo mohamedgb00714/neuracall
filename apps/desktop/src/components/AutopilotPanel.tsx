@@ -123,10 +123,19 @@ export function AutopilotPanel() {
         <span className={`pill ${status.enabled ? "pill-on" : "pill-off"}`}>
           {status.enabled ? "answering calls" : "off"}
         </span>
+        {/* Which pipeline is live decides whether the LLM and TTS settings mean
+            anything, so it is stated here rather than inferred from silence. */}
+        <span className="pill">{status.voiceAgent ? "voice agent" : "LLM + TTS"}</span>
         <button type="button" onClick={() => void toggle()} disabled={busy}>
           {status.enabled ? "Stop answering" : "Start answering calls"}
         </button>
       </header>
+
+      <p className="muted">
+        {status.voiceAgent
+          ? "AssemblyAI Voice Agent — one socket does speech, reasoning and voice. The LLM and TTS settings are not used."
+          : "AssemblyAI speech-to-text → LLM → TTS."}
+      </p>
 
       <p className="muted">
         {status.handled} call{status.handled === 1 ? "" : "s"} handled · {status.activeCalls} active

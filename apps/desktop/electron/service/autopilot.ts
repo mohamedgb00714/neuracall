@@ -31,6 +31,7 @@ import {
   Orchestrator,
   PostCallProcessor,
   ScrcpyAudioCapture,
+  VoiceAgentBridge,
   Watchdog,
   createHealthServer,
   detectAudioPlayer,
@@ -114,6 +115,12 @@ export interface AutopilotStatus {
   degraded: string[];
   llmConfigured: boolean;
   ttsConfigured: boolean;
+  /**
+   * True when the AssemblyAI Voice Agent is handling the conversation, which
+   * makes `llmConfigured` and `ttsConfigured` irrelevant rather than merely
+   * false — it supplies the reply and the voice itself.
+   */
+  voiceAgent: boolean;
   injection: "off" | "sink" | "unavailable";
   activeCalls: number;
   handled: number;
@@ -148,6 +155,11 @@ export class Autopilot extends EventEmitter {
   private readonly opts: AutopilotOptions;
   private readonly orchestrator: Orchestrator;
   private readonly agent: CallAgent;
+  /**
+   * Set when the AssemblyAI Voice Agent is driving the call instead of the
+   * composed STT/LLM/TTS pipeline. Null means the composed path is in use.
+   */
+  private readonly voiceAgent: VoiceAgentBridge | null;
   private readonly llmConfigured: boolean;
   private readonly ttsConfigured: boolean;
   /** One-line description of the chosen TTS provider; never holds a key. */
@@ -175,6 +187,11 @@ export class Autopilot extends EventEmitter {
   constructor(opts: AutopilotOptions) {
     super();
     this.opts = opts;
+
+    // The Voice Agent replaces STT, the LLM and TTS with one socket, so when it
+    // is on none of the three needs configuring — that is the whole point of
+    // it. Built first because it decides what the rest of the pipeline is.
+    this.voiceAgent = buildVoiceAgentBridge(opts.config, () => this.buildInjector());
 
     const llm = buildLlmClient(opts.config, opts.llmBaseUrl);
     this.llmConfigured = llm !== null;
@@ -221,13 +238,13 @@ export class Autopilot extends EventEmitter {
       devices: opts.devices,
       controllerFor: (deviceId) => new AndroidCallController(opts.runner, deviceId),
       detector: new AdbCallChannelDetector(opts.runner),
-      sessions: opts.sessions,
+      sessions: this.voiceAgent ?? opts.sessions,
       capture: new ScrcpyAudioCapture({
         ...(opts.audioSource !== undefined ? { audioSource: opts.audioSource } : {}),
         onSourceSelected: ({ deviceId, source }) =>
           this.emit("error", `capture using --audio-source=${source}`, deviceId),
       }),
-      agent: this.agent,
+      agent: this.voiceAgent ? this.voiceAgent.agent : this.agent,
       // The CRM is the call store, not a separate system: every call is
       // written straight into it and auto-linked to a contact by number, so
       // history is queryable per caller instead of being a flat log.
@@ -238,7 +255,11 @@ export class Autopilot extends EventEmitter {
         ...(opts.realtimeMode !== undefined ? { mode: opts.realtimeMode } : {}),
         ...(opts.keyterms && opts.keyterms.length > 0 ? { keyterms_prompt: opts.keyterms } : {}),
       },
-      injectorFor: () => this.buildInjector(),
+      // On the Voice Agent path the bridge owns the transport: it streams the
+      // reply straight there as it arrives instead of handing it back, so
+      // giving the orchestrator its own injector would open a second one that
+      // is never written to.
+      ...(this.voiceAgent ? {} : { injectorFor: () => this.buildInjector() }),
       watchIntervalMs: opts.pollIntervalMs ?? 1500,
     });
 
@@ -336,13 +357,21 @@ export class Autopilot extends EventEmitter {
 
   status(): AutopilotStatus {
     const degraded: string[] = [];
-    if (!this.llmConfigured) {
-      degraded.push("LLM_API_KEY / LLM_MODEL not set — calls are transcribed but the agent will not reply.");
-    }
-    if (!this.ttsConfigured) {
-      degraded.push(
-        `No TTS provider configured (${this.ttsDescription}) — replies appear in the transcript but are not spoken.`,
-      );
+    // The Voice Agent supplies the reply and the voice itself, so warning about
+    // a missing LLM key or TTS provider would be telling the operator to fix
+    // something that is not used.
+    if (!this.voiceAgent) {
+      if (!this.llmConfigured) {
+        degraded.push(
+          "LLM_API_KEY / LLM_MODEL not set — calls are transcribed but the agent will not reply. " +
+            "Turning on the AssemblyAI Voice Agent supplies both the reply and the voice on the key you already have.",
+        );
+      }
+      if (!this.ttsConfigured) {
+        degraded.push(
+          `No TTS provider configured (${this.ttsDescription}) — replies appear in the transcript but are not spoken.`,
+        );
+      }
     }
     if (this.injection === "off") {
       degraded.push("No injection sink configured — the caller cannot hear the agent (see docs/AUDIO-ABI.md).");
@@ -355,6 +384,7 @@ export class Autopilot extends EventEmitter {
       degraded,
       llmConfigured: this.llmConfigured,
       ttsConfigured: this.ttsConfigured,
+      voiceAgent: this.voiceAgent !== null,
       injection: this.injection,
       activeCalls: this.orchestrator.activeCalls.length,
       handled: this.handled,
@@ -421,6 +451,40 @@ export class Autopilot extends EventEmitter {
 }
 
 /** Build the LLM client, or null when the config still holds placeholders. */
+/**
+ * The Voice Agent bridge, or null when the composed pipeline should be used.
+ *
+ * A stored `agentId` wins when it is set, because that is the only way to run a
+ * BYO LLM — the service rejects an `llm` block sent on the wire. Without one,
+ * the agent is configured inline from the same settings, which needs no REST
+ * call and no agent to have been created first.
+ */
+function buildVoiceAgentBridge(
+  config: AppConfig,
+  injectorFor: () => AudioInjector,
+): VoiceAgentBridge | null {
+  const va = config.voiceAgent;
+  if (!va.enabled) return null;
+  if (!config.assemblyai.apiKey) return null;
+
+  return new VoiceAgentBridge({
+    apiKey: config.assemblyai.apiKey,
+    wsUrl: va.wsUrl,
+    injectorFor,
+    ...(va.agentId
+      ? { agentId: va.agentId }
+      : {
+          session: {
+            // A bare id: `{ voice_id }` is the stored-agent shape and is
+            // refused on session.update as invalid_format.
+            voice: va.voice,
+            ...(va.systemPrompt ? { system_prompt: va.systemPrompt } : {}),
+            ...(va.greeting ? { greeting: va.greeting } : {}),
+          },
+        }),
+  });
+}
+
 function buildLlmClient(config: AppConfig, baseUrl?: string): LlmClient | null {
   const apiKey = config.llm.apiKey;
   const model = config.llm.model;

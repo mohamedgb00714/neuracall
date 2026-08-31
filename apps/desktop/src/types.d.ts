@@ -61,6 +61,13 @@ export interface AutopilotStatus {
   degraded: string[];
   llmConfigured: boolean;
   ttsConfigured: boolean;
+  /**
+   * True when calls run through AssemblyAI's Voice Agent instead of the
+   * speech-to-text → LLM → TTS chain. It decides whether `llmConfigured` and
+   * `ttsConfigured` mean anything at all, so the UI must show which one is
+   * live rather than let an operator tune providers the call never touches.
+   */
+  voiceAgent: boolean;
   injection: "off" | "sink" | "unavailable";
   activeCalls: number;
   handled: number;
@@ -163,6 +170,23 @@ export interface NeuraCallSettings {
     model: string;
     voice: string;
     baseUrl: string;
+  };
+  /**
+   * AssemblyAI's Voice Agent: one socket that does speech, reasoning and voice
+   * on the AssemblyAI key already configured above. When `enabled`, the `llm`
+   * and `tts` sections above are not consulted on a call.
+   *
+   * Nothing here is a secret — there is no second credential to hold — so
+   * unlike `llm` and `tts` this section crosses to the renderer unredacted.
+   */
+  voiceAgent: {
+    enabled: boolean;
+    /** Uuid of an agent stored via POST /v1/agents. "" configures it inline. */
+    agentId: string;
+    /** A `voice_id` such as "alba"; see src/voices.ts for the catalogue. */
+    voice: string;
+    greeting: string;
+    systemPrompt: string;
   };
   audio: {
     /** scrcpy --audio-source. */

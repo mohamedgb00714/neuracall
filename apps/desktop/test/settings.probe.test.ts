@@ -201,6 +201,10 @@ test("buildAppConfig re-derives the endpoints from the chosen region", () => {
   assert.equal(config.assemblyai.realtimeHost, "streaming.eu.assemblyai.com");
   assert.equal(config.assemblyai.restBaseUrl, "https://api.eu.assemblyai.com");
   assert.equal(config.assemblyai.tokenUrl, "https://streaming.eu.assemblyai.com/v3/token");
+  // The agents.* family moves with the region too, or switching to EU for data
+  // residency would leave the speech-to-speech leg on the US cluster.
+  assert.equal(config.voiceAgent.wsUrl, "wss://agents.eu.assemblyai.com/v1/ws");
+  assert.equal(config.voiceAgent.restBaseUrl, "https://agents.eu.assemblyai.com/v1");
   assert.equal(config.llm.apiKey, LLM_KEY);
   assert.equal(config.tts.apiKey, TTS_KEY);
 

@@ -312,6 +312,21 @@ export class Runtime extends EventEmitter {
     this.appConfig.llm.model = merged.llm.model;
     this.appConfig.tts.apiKey = merged.tts.apiKey;
     this.appConfig.tts.model = merged.tts.model;
+    // The Autopilot reads config.voiceAgent once, when reloadSettings rebuilds
+    // it after this returns. A section left out here is frozen at launch: the
+    // switch, the voice and the region's agents.* hosts would only ever change
+    // by restarting the app. Field by field for the same reason as llm/tts —
+    // agentId, greeting and systemPrompt are absent from `merged` when cleared,
+    // and Object.assign would keep the old value. sampleRate is readonly and
+    // pinned; model is not settings-driven (see buildAppConfig).
+    this.appConfig.voiceAgent.enabled = merged.voiceAgent.enabled;
+    this.appConfig.voiceAgent.voice = merged.voiceAgent.voice;
+    this.appConfig.voiceAgent.agentId = merged.voiceAgent.agentId;
+    this.appConfig.voiceAgent.greeting = merged.voiceAgent.greeting;
+    this.appConfig.voiceAgent.systemPrompt = merged.voiceAgent.systemPrompt;
+    this.appConfig.voiceAgent.restBaseUrl = merged.voiceAgent.restBaseUrl;
+    this.appConfig.voiceAgent.wsUrl = merged.voiceAgent.wsUrl;
+    this.appConfig.voiceAgent.tokenUrl = merged.voiceAgent.tokenUrl;
   }
 
   // ---------------------------------------------------------------- STT

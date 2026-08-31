@@ -1,13 +1,20 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type {
   AssemblyAIRegion,
   ProbeResult,
   RedactedSettings,
-  SettingsPatch,
   SettingsProbe,
   TranscriptionMode,
   TtsProvider,
 } from "../types";
+import { MAX_KEYTERMS, toPatch, type Form } from "../settingsPatch";
+import {
+  UNDERSTOOD_LANGUAGE_COUNT,
+  VOICES,
+  isKnownVoice,
+  spokenLanguageList,
+  voiceLabel,
+} from "../voices";
 
 const REGIONS: { value: AssemblyAIRegion; label: string }[] = [
   { value: "edge", label: "edge — routed, lowest latency" },
@@ -26,34 +33,6 @@ const TTS_PROVIDERS: TtsProvider[] = ["auto", "openai", "elevenlabs", "command",
 /** scrcpy --audio-source values that can carry call audio, cleanest first. */
 const CAPTURE_SOURCES = ["voice-call-downlink", "voice-call", "output", "playback", "mic"];
 
-const MAX_KEYTERMS = 100;
-
-/** Form state. Numbers are held as strings so a half-typed value is not NaN. */
-interface Form {
-  region: AssemblyAIRegion;
-  speechModel: string;
-  mode: TranscriptionMode;
-  keyterms: string;
-  llmApiKey: string;
-  llmClearKey: boolean;
-  llmModel: string;
-  llmBaseUrl: string;
-  llmSystemPrompt: string;
-  llmGreeting: string;
-  ttsProvider: TtsProvider;
-  ttsApiKey: string;
-  ttsClearKey: boolean;
-  ttsModel: string;
-  ttsVoice: string;
-  ttsBaseUrl: string;
-  captureSource: string;
-  injectSink: string;
-  maxCallMs: string;
-  stallMs: string;
-  defaultCountryCode: string;
-  healthPort: string;
-}
-
 type SaveState =
   | { kind: "idle" }
   | { kind: "pending" }
@@ -66,6 +45,11 @@ function toForm(s: RedactedSettings): Form {
     speechModel: s.assemblyai.speechModel,
     mode: s.assemblyai.mode,
     keyterms: s.assemblyai.keyterms.join("\n"),
+    voiceAgentEnabled: s.voiceAgent.enabled,
+    voiceAgentId: s.voiceAgent.agentId,
+    voiceAgentVoice: s.voiceAgent.voice,
+    voiceAgentGreeting: s.voiceAgent.greeting,
+    voiceAgentSystemPrompt: s.voiceAgent.systemPrompt,
     // Key inputs always start empty: "" is the wire value for "unchanged".
     llmApiKey: "",
     llmClearKey: false,
@@ -127,6 +111,9 @@ export function SettingsPage() {
   const [probing, setProbing] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [drifted, setDrifted] = useState(false);
+  // A checkbox is only labelled if the <label> can name it, so the id has to
+  // exist before the early returns below — hooks cannot run after them.
+  const voiceAgentToggleId = useId();
   // Ref, not state: the subscription below has to read it without re-running.
   const dirtyRef = useRef(false);
 
@@ -190,6 +177,10 @@ export function SettingsPage() {
   };
 
   const terms = parseKeyterms(form.keyterms);
+  // Read from the form, not from `settings`: flipping the toggle has to grey
+  // out the LLM and TTS sections immediately, or the operator keeps filling in
+  // fields that the call it is about to make will never read.
+  const voiceAgentOn = form.voiceAgentEnabled;
 
   const save = async () => {
     const maxCallMs = parseMs(form.maxCallMs);
@@ -204,40 +195,7 @@ export function SettingsPage() {
       return;
     }
 
-    const body: SettingsPatch = {
-      assemblyai: {
-        region: form.region,
-        speechModel: form.speechModel.trim(),
-        mode: form.mode,
-        keyterms: terms.slice(0, MAX_KEYTERMS),
-      },
-      llm: {
-        // Trimmed, so a stray pasted newline cannot become part of the key —
-        // and whitespace-only input falls back to "" (leave the stored key).
-        apiKey: form.llmClearKey ? null : form.llmApiKey.trim(),
-        model: form.llmModel.trim(),
-        baseUrl: form.llmBaseUrl.trim(),
-        systemPrompt: form.llmSystemPrompt,
-        greeting: form.llmGreeting,
-      },
-      tts: {
-        provider: form.ttsProvider,
-        apiKey: form.ttsClearKey ? null : form.ttsApiKey.trim(),
-        model: form.ttsModel.trim(),
-        voice: form.ttsVoice.trim(),
-        baseUrl: form.ttsBaseUrl.trim(),
-      },
-      audio: {
-        captureSource: form.captureSource.trim(),
-        injectSink: form.injectSink.trim(),
-      },
-      autopilot: {
-        maxCallMs,
-        stallMs,
-        defaultCountryCode: form.defaultCountryCode.trim(),
-        healthPort,
-      },
-    };
+    const body = toPatch(form, terms, { maxCallMs, stallMs, healthPort });
 
     setSaveState({ kind: "pending" });
     try {
@@ -341,7 +299,100 @@ export function SettingsPage() {
       </section>
 
       <section className="settings-group">
-        <h2>AI agent (LLM)</h2>
+        <h2>Voice agent (AssemblyAI)</h2>
+        <Toggle
+          id={voiceAgentToggleId}
+          label="Answer calls with AssemblyAI’s Voice Agent"
+          checked={form.voiceAgentEnabled}
+          onChange={(enabled) => patch({ voiceAgentEnabled: enabled })}
+          hint={
+            "Turning this on replaces the separate LLM and TTS providers with " +
+            "AssemblyAI’s own, on the key already configured above — so it needs " +
+            "no extra credentials."
+          }
+        />
+
+        <p className="settings-callout">
+          <strong>The agent speaks {spokenLanguageList()}, and nothing else.</strong> It{" "}
+          <em>understands</em> {UNDERSTOOD_LANGUAGE_COUNT} languages, so it will follow a caller
+          speaking Arabic, Darija or French — but there is no Arabic voice, and it replies in the
+          language of the voice you pick below whatever the caller speaks. For Arabic-speaking
+          callers, leave this off and use the LLM and TTS providers instead.
+        </p>
+
+        <Field label="Voice" hint="Picks both the voice and the language the agent answers in.">
+          <select
+            value={form.voiceAgentVoice}
+            onChange={(e) => patch({ voiceAgentVoice: e.target.value })}
+          >
+            {/* A voice set from the environment that this build does not know
+                is still shown, so opening the dropdown cannot silently rewrite
+                it to something the operator never chose. */}
+            {!isKnownVoice(form.voiceAgentVoice) && (
+              <option value={form.voiceAgentVoice}>
+                {form.voiceAgentVoice === ""
+                  ? "— no voice set —"
+                  : `${form.voiceAgentVoice} — unknown voice`}
+              </option>
+            )}
+            {VOICES.map((voice) => (
+              <option key={voice.id} value={voice.id}>
+                {voiceLabel(voice)}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="Greeting" hint="The first thing said after answering. Blank opens silently.">
+          <textarea
+            rows={2}
+            value={form.voiceAgentGreeting}
+            placeholder="Hello, thanks for calling. How can I help?"
+            onChange={(e) => patch({ voiceAgentGreeting: e.target.value })}
+          />
+        </Field>
+
+        <Field
+          label="System prompt"
+          hint="How the agent behaves on every call. Blank uses the NeuraCall house prompt."
+        >
+          <textarea
+            rows={6}
+            value={form.voiceAgentSystemPrompt}
+            onChange={(e) => patch({ voiceAgentSystemPrompt: e.target.value })}
+          />
+        </Field>
+
+        <Field
+          label="Stored agent ID"
+          hint={
+            "Optional. Only needed to run the agent on your own LLM, which " +
+            "AssemblyAI accepts only on a stored agent. Leave it blank and the " +
+            "fields above configure the agent inline on each call."
+          }
+        >
+          <input
+            type="text"
+            autoComplete="off"
+            spellCheck={false}
+            value={form.voiceAgentId}
+            placeholder="blank = configure inline"
+            onChange={(e) => patch({ voiceAgentId: e.target.value })}
+          />
+        </Field>
+      </section>
+
+      <section className={`settings-group${voiceAgentOn ? " settings-group-unused" : ""}`}>
+        <h2>
+          AI agent (LLM)
+          {voiceAgentOn && <span className="settings-unused-tag">not used right now</span>}
+        </h2>
+        {voiceAgentOn && (
+          <p className="settings-note">
+            The Voice Agent does its own reasoning, so nothing here is read on a call. These
+            settings are still saved, and take over again the moment you turn it off.
+          </p>
+        )}
         <Field label="Base URL">
           <input
             type="url"
@@ -381,8 +432,17 @@ export function SettingsPage() {
         </Field>
       </section>
 
-      <section className="settings-group">
-        <h2>Voice (TTS)</h2>
+      <section className={`settings-group${voiceAgentOn ? " settings-group-unused" : ""}`}>
+        <h2>
+          Voice (TTS)
+          {voiceAgentOn && <span className="settings-unused-tag">not used right now</span>}
+        </h2>
+        {voiceAgentOn && (
+          <p className="settings-note">
+            The Voice Agent speaks with its own voice — set that in the section above. Nothing here
+            is read on a call while it is on.
+          </p>
+        )}
         <Field
           label="Provider"
           hint="“auto” picks whichever provider is configured; “silent” speaks nothing."
@@ -513,7 +573,11 @@ export function SettingsPage() {
         <button type="button" onClick={() => void runProbe()} disabled={probing}>
           {probing ? "Testing…" : "Test connection"}
         </button>
-        <p className="settings-note">Tests the saved settings, not unsaved edits.</p>
+        <p className="settings-note">
+          Tests the saved settings, not unsaved edits.
+          {voiceAgentOn &&
+            " The Voice Agent runs on the AssemblyAI key, so the LLM and TTS rows say nothing about whether a call will work."}
+        </p>
         {probeError && <p className="settings-error">{probeError}</p>}
         {probe && (
           <ul className="probe-list">
@@ -563,6 +627,39 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       {children}
       {hint && <span className="settings-hint">{hint}</span>}
     </label>
+  );
+}
+
+/**
+ * A boolean setting. The checkbox stays in the DOM and keeps its own focus and
+ * keyboard behaviour — the track and knob are painted around it, not instead of
+ * it, so `htmlFor` names a real control and Tab/Space still work.
+ */
+function Toggle(props: {
+  id: string;
+  label: string;
+  checked: boolean;
+  hint?: string;
+  onChange: (checked: boolean) => void;
+}) {
+  const { id, label, checked, hint, onChange } = props;
+  return (
+    <div className="settings-field">
+      <label className="settings-toggle" htmlFor={id}>
+        <input
+          id={id}
+          type="checkbox"
+          className="settings-toggle-input"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <span className="settings-toggle-track" aria-hidden="true">
+          <span className="settings-toggle-knob" />
+        </span>
+        <span>{label}</span>
+      </label>
+      {hint && <span className="settings-hint">{hint}</span>}
+    </div>
   );
 }
 
