@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { CommandRunner } from "./adb.js";
-import type { AdbState, Device, DevicePhase } from "./types.js";
+import type { CallChannelDetector, DetectedIncomingCall } from "./whatsAppDetector.js";
+import type { AdbState, ChannelKind, Device, DevicePhase } from "./types.js";
 
 export interface DeviceManagerOptions {
   runner: CommandRunner;
@@ -79,6 +80,7 @@ export class DeviceManager extends EventEmitter {
         kind: id.includes(":") ? "wifi" : "usb",
         adbState,
         phase: adbState === "device" ? (phase === "unknown" ? "online" : phase) : "offline",
+        channel: existing?.channel,
         updatedAt: Date.now(),
       };
       this.devices.set(id, device);
@@ -123,6 +125,36 @@ export class DeviceManager extends EventEmitter {
     this.devices.set(id, updated);
     this.emit("device", updated);
     this.emit("phase", id, phase);
+  }
+
+  /** Record an inbound call's channel and transition the device to incoming. */
+  reportIncomingCall(id: string, channel: ChannelKind): Device | undefined {
+    const dev = this.devices.get(id);
+    if (!dev) return undefined;
+    const updated: Device = { ...dev, phase: "incoming", channel, updatedAt: Date.now() };
+    this.devices.set(id, updated);
+    this.emit("device", updated);
+    this.emit("phase", id, "incoming");
+    this.emit("incoming", id, channel);
+    return updated;
+  }
+
+  /**
+   * Ask a device whether a call is ringing and on which channel, and record the
+   * result (phase -> incoming when present). Returns the detection so callers
+   * can label the channel before auto-answer.
+   */
+  async detectIncomingCall(
+    id: string,
+    detector: CallChannelDetector,
+  ): Promise<DetectedIncomingCall> {
+    const dev = this.devices.get(id);
+    if (!dev) throw new Error(`Unknown device: ${id}`);
+    const detected = await detector.detect(id);
+    if (detected.present && detected.channel) {
+      this.reportIncomingCall(id, detected.channel);
+    }
+    return detected;
   }
 
   private markAllOffline(): void {

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DeviceManager } from "../src/deviceManager.js";
-import { AndroidCallController } from "../src/callController.js";
+import { AndroidCallController, normalizeTel, parseCallState } from "../src/callController.js";
 import type { CommandRunner } from "../src/adb.js";
 import { KeyCodes } from "../src/types.js";
 
@@ -120,27 +120,70 @@ test("AndroidCallController.hangUp sends KEYCODE_ENDCALL", async () => {
   ]);
 });
 
-test("AndroidCallController.dial presses each digit as a keyevent", async () => {
+function recordingRunner(reply = ""): { runner: CommandRunner; calls: string[][] } {
   const calls: string[][] = [];
   const runner: CommandRunner = {
     async run(args) {
       calls.push(args);
-      return "";
+      return reply;
     },
-    async runForDevice(endpoint, args) {
+    async runForDevice(_endpoint, args) {
       calls.push(args);
-      return "";
+      return reply;
     },
   };
+  return { runner, calls };
+}
+
+test("AndroidCallController.dial places the call via the CALL intent", async () => {
+  const { runner, calls } = recordingRunner();
   const ctl = new AndroidCallController(runner, "serial1");
-  await ctl.dial("+1 234");
-  // + => 0 (wildcard maps below), 1, 2, 3, 4
+  await ctl.dial("+1 (234) 567-89");
+  assert.deepEqual(calls, [
+    ["shell", "am", "start", "-a", "android.intent.action.CALL", "-d", "tel:+123456789"],
+  ]);
+});
+
+test("AndroidCallController.openDialer prefills without placing a call", async () => {
+  const { runner, calls } = recordingRunner();
+  const ctl = new AndroidCallController(runner, "serial1");
+  await ctl.openDialer("*123#");
+  await ctl.openDialer();
+  assert.deepEqual(calls, [
+    ["shell", "am", "start", "-a", "android.intent.action.DIAL", "-d", "tel:%2A123%23"],
+    ["shell", "am", "start", "-a", "android.intent.action.DIAL"],
+  ]);
+});
+
+test("AndroidCallController.pressDigits presses each digit as a keyevent", async () => {
+  const { runner, calls } = recordingRunner();
+  const ctl = new AndroidCallController(runner, "serial1");
+  await ctl.pressDigits("1#");
   assert.deepEqual(calls, [
     ["shell", "input", "keyevent", String(KeyCodes.KEYCODE_1)],
-    ["shell", "input", "keyevent", String(KeyCodes.KEYCODE_2)],
-    ["shell", "input", "keyevent", String(KeyCodes.KEYCODE_3)],
-    ["shell", "input", "keyevent", String(KeyCodes.KEYCODE_4)],
+    ["shell", "input", "keyevent", String(KeyCodes.KEYCODE_POUND)],
   ]);
+});
+
+test("normalizeTel keeps one leading plus and strips noise", () => {
+  assert.equal(normalizeTel("+33 6 12 34"), "+3361234");
+  assert.equal(normalizeTel("00+44 20"), "004420");
+  assert.equal(normalizeTel("*#06#"), "*#06#");
+  assert.throws(() => normalizeTel("+"), /Dial number invalid/);
+});
+
+test("parseCallState picks the most active SIM and handles unknown output", () => {
+  assert.equal(parseCallState("mCallState=0\nmCallState=0"), "idle");
+  assert.equal(parseCallState("mCallState=0\n  mCallState=1"), "ringing");
+  assert.equal(parseCallState("mCallState=2\nmCallState=0"), "offhook");
+  assert.equal(parseCallState("garbage"), "unknown");
+});
+
+test("AndroidCallController.callState reads dumpsys telephony.registry", async () => {
+  const { runner, calls } = recordingRunner("  mCallState=2\n");
+  const ctl = new AndroidCallController(runner, "serial1");
+  assert.equal(await ctl.callState(), "offhook");
+  assert.deepEqual(calls, [["shell", "dumpsys", "telephony.registry"]]);
 });
 
 test("AndroidCallController.dial rejects a number with no dialable digits", async () => {

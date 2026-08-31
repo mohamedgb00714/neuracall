@@ -1,12 +1,13 @@
 import type { CommandRunner } from "./adb.js";
-import type { CallController } from "./types.js";
+import type { CallController, CallState } from "./types.js";
 import { KeyCodes } from "./types.js";
 
 /**
- * AndroidCallController drives a single device's in-call UI through Android
- * key events via adb. It has no knowledge of the dialer app — it presses
- * physical-style keys (KEYCODE_CALL / KEYCODE_ENDCALL) which the active call
- * UI responds to regardless of OEM or app.
+ * AndroidCallController drives a single device's telephony through adb. Call
+ * placement uses the standard CALL/DIAL intents (works on every OEM dialer);
+ * answer / hang-up / mute press the physical-style keys (KEYCODE_CALL /
+ * KEYCODE_ENDCALL) which the active call UI responds to regardless of OEM or
+ * app; call state comes from `dumpsys telephony.registry`.
  */
 export class AndroidCallController implements CallController {
   constructor(
@@ -31,20 +32,53 @@ export class AndroidCallController implements CallController {
     }
   }
 
+  /**
+   * Place an outgoing call. The CALL intent starts ringing the number
+   * immediately (adb shell holds CALL_PHONE), so callers must treat this as an
+   * outward-facing action.
+   */
   async dial(number: string): Promise<void> {
-    // A leading "+" is not representable as a single Android keyevent (it maps
-    // to a long-press on 0), so drop it. Callers should pass a local-format
-    // (e.g. already 0-prefixed) number when they need a country prefix.
-    const digits = number.replace(/[^\d*#]/g, "");
-    if (!digits) throw new Error(`Dial number invalid: ${JSON.stringify(number)}`);
-    for (const ch of digits) {
-      const code = digitToKey(ch);
-      await this.keyEvent(code);
+    const tel = normalizeTel(number);
+    await this.runner.runForDevice(this.endpoint, [
+      "shell",
+      "am",
+      "start",
+      "-a",
+      "android.intent.action.CALL",
+      "-d",
+      telUri(tel),
+    ]);
+  }
+
+  /** Open the dialer, prefilled with `number` when given. Nothing is placed. */
+  async openDialer(number?: string): Promise<void> {
+    const args = ["shell", "am", "start", "-a", "android.intent.action.DIAL"];
+    if (number !== undefined && number.trim() !== "") {
+      args.push("-d", telUri(normalizeTel(number)));
+    }
+    await this.runner.runForDevice(this.endpoint, args);
+  }
+
+  /** Type digits as key events — for in-call DTMF menus or a dialer field. */
+  async pressDigits(digits: string): Promise<void> {
+    const cleaned = digits.replace(/[^\d*#]/g, "");
+    if (!cleaned) throw new Error(`Dial number invalid: ${JSON.stringify(digits)}`);
+    for (const ch of cleaned) {
+      await this.keyEvent(digitToKey(ch));
     }
   }
 
   async toggleMute(): Promise<void> {
     await this.keyEvent(KeyCodes.KEYCODE_MUTE);
+  }
+
+  async callState(): Promise<CallState> {
+    const out = await this.runner.runForDevice(this.endpoint, [
+      "shell",
+      "dumpsys",
+      "telephony.registry",
+    ]);
+    return parseCallState(out);
   }
 
   private async keyEvent(code: number): Promise<void> {
@@ -55,6 +89,37 @@ export class AndroidCallController implements CallController {
       String(code),
     ]);
   }
+}
+
+/**
+ * Reduce a human-typed number to what a tel: URI accepts: digits, `*`, `#`
+ * and at most one leading `+`. Throws when no digit survives.
+ */
+export function normalizeTel(number: string): string {
+  const cleaned = number.replace(/[^\d+*#]/g, "");
+  if (!/\d/.test(cleaned)) {
+    throw new Error(`Dial number invalid: ${JSON.stringify(number)}`);
+  }
+  const plus = cleaned.startsWith("+") ? "+" : "";
+  return plus + cleaned.replace(/\+/g, "");
+}
+
+/** Build the `tel:` URI, escaping `*`/`#` which the device shell would mangle. */
+export function telUri(tel: string): string {
+  return `tel:${tel.replace(/\*/g, "%2A").replace(/#/g, "%23")}`;
+}
+
+/**
+ * Parse `dumpsys telephony.registry` output. Multi-SIM devices print one
+ * mCallState per phone; the most active one wins (2=offhook, 1=ringing, 0=idle).
+ */
+export function parseCallState(dumpsys: string): CallState {
+  const states = [...dumpsys.matchAll(/mCallState=(\d)/g)].map((m) => Number(m[1]));
+  if (states.length === 0) return "unknown";
+  const max = Math.max(...states);
+  if (max >= 2) return "offhook";
+  if (max === 1) return "ringing";
+  return "idle";
 }
 
 function digitToKey(ch: string): number {

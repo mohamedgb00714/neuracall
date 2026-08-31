@@ -20,6 +20,8 @@ export interface Device {
   adbState: AdbState;
   /** Our app-level phase. */
   phase: DevicePhase;
+  /** Detected inbound channel (cellular vs WhatsApp), once known. */
+  channel?: ChannelKind;
   /** Optional human label. */
   label?: string;
   /** Last time state changed (ms epoch). */
@@ -28,6 +30,9 @@ export interface Device {
 
 /** The kind of inbound call. */
 export type ChannelKind = "cellular" | "whatsapp";
+
+/** Telephony call state as reported by `dumpsys telephony.registry` (mCallState). */
+export type CallState = "idle" | "ringing" | "offhook" | "unknown";
 
 type AndroidKeyCode = number;
 
@@ -59,8 +64,14 @@ export interface CallController {
   hangUp(): Promise<void>;
   /** Hang up without throwing if the call was already ended. */
   safeHangUp(): Promise<void>;
-  /** Open the dialer and dial a number via keycodes. */
+  /** Place an outgoing call to a number (android.intent.action.CALL). */
   dial(number: string): Promise<void>;
+  /** Open the dialer, optionally prefilled — no call is placed. */
+  openDialer(number?: string): Promise<void>;
+  /** Press keypad digits (DTMF / dialer field) as key events. */
+  pressDigits(digits: string): Promise<void>;
+  /** Current telephony call state of the device. */
+  callState(): Promise<CallState>;
   /** Toggle the microphone mute. */
   toggleMute(): Promise<void>;
 }
