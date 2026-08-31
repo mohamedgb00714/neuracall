@@ -6,7 +6,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "pretest:e2e": "tsc -p tsconfig.test.json",
-    "test:e2e": "node --test \"dist-test/test/*.e2e.test.js\""
+    "test:e2e": "node --test dist-test/test/*.e2e.test.js"
   },
   "dependencies": {
     "@neuracall/aai-client": "*",

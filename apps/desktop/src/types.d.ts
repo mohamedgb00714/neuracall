@@ -89,6 +89,54 @@ export interface CallRecord {
   error?: string;
 }
 
+/** One phone number belonging to a contact (see packages/crm/src/types.ts). */
+export interface ContactPhone {
+  /** The normalized match key ("+15550109999"). */
+  e164: string;
+  /** The trailing digits used by the suffix fallback. */
+  suffix: string;
+  /** What the number looked like when it was added. */
+  raw: string;
+}
+
+export interface Contact {
+  id: string;
+  displayName: string;
+  org: string | null;
+  notes: string | null;
+  createdAt: number;
+  updatedAt: number;
+  phones: ContactPhone[];
+  tags: string[];
+}
+
+/** A contact carrying the call roll-up the list column shows. */
+export interface ContactSummary extends Contact {
+  callCount: number;
+  /** ms since epoch of the most recent linked call; null when there are none. */
+  lastCallAt: number | null;
+}
+
+/** A call record with the contact it was linked to — null while unidentified. */
+export interface CrmCall extends CallRecord {
+  contactId: string | null;
+}
+
+export interface CreateContactInput {
+  displayName: string;
+  org?: string;
+  notes?: string;
+  /** Raw numbers; the main process normalizes them and drops unparseable ones. */
+  phones?: string[];
+  tags?: string[];
+}
+
+export interface CreateContactResult {
+  ok: boolean;
+  contact?: Contact;
+  error?: string;
+}
+
 export type AssemblyAIRegion = "us" | "eu" | "edge";
 export type TranscriptionMode = "min_latency" | "balanced" | "max_accuracy";
 export type TtsProvider = "auto" | "openai" | "elevenlabs" | "command" | "silent";
@@ -220,6 +268,13 @@ export interface NeuraCallBridge {
     cb: (msg: { callId: string; entry: TranscriptEntry }) => void,
   ): () => void;
   onAutopilotError(cb: (msg: { message: string; callId?: string }) => void): () => void;
+
+  /** False on a runtime without node:sqlite, where there is no contact database. */
+  crmAvailable(): Promise<boolean>;
+  crmContacts(): Promise<ContactSummary[]>;
+  crmCalls(contactId: string): Promise<CrmCall[]>;
+  crmRecentCalls(): Promise<CrmCall[]>;
+  crmCreateContact(input: CreateContactInput): Promise<CreateContactResult>;
 
   getSettings(): Promise<RedactedSettings>;
   saveSettings(patch: SettingsPatch): Promise<SettingsSaveResult>;

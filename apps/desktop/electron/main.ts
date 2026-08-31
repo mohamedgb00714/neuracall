@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { loadEnv, getConfig, logStartupBanner } from "@neuracall/config";
 import { detectRequiredTools } from "@neuracall/scrcpy-bridge";
+import type { CreateContactInput, CrmStore } from "@neuracall/crm";
 import { Runtime } from "./service/runtime.js";
 import { SettingsStore, buildAppConfig, probeSettings } from "./service/settings.js";
 
@@ -76,6 +77,50 @@ function requireRuntime(): Runtime {
 function requireSettings(): SettingsStore {
   if (!settings) throw new Error("Settings store not initialised.");
   return settings;
+}
+
+/**
+ * The contact database, or null when there is none.
+ *
+ * Electron pins Node 20, which has no `node:sqlite`; the runtime then records
+ * calls to JSONL and there is no CRM at all. Every handler below answers with
+ * an empty result instead of throwing, so the Contacts view can explain that
+ * rather than surface an IPC failure.
+ */
+function crmStore(): CrmStore | null {
+  if (!runtime) return null;
+  try {
+    return runtime.autopilot.crm;
+  } catch {
+    return null;
+  }
+}
+
+/** How much history one query hands the renderer. */
+const CRM_CALL_LIMIT = 200;
+
+/** The renderer is untrusted input like any other: nothing reaches SQL unchecked. */
+function parseContactInput(input: unknown): CreateContactInput {
+  const raw = (typeof input === "object" && input !== null ? input : {}) as Record<string, unknown>;
+  const displayName = typeof raw["displayName"] === "string" ? raw["displayName"].trim() : "";
+  if (displayName === "") throw new Error("A contact needs a name.");
+  const org = typeof raw["org"] === "string" ? raw["org"].trim() : "";
+  const notes = typeof raw["notes"] === "string" ? raw["notes"].trim() : "";
+  return {
+    displayName,
+    phones: stringList(raw["phones"]),
+    tags: stringList(raw["tags"]),
+    ...(org !== "" ? { org } : {}),
+    ...(notes !== "" ? { notes } : {}),
+  };
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
 }
 
 function send(channel: string, payload: unknown): void {
@@ -178,6 +223,47 @@ function registerIpc() {
   ipcMain.handle("autopilot:endCall", (_e, { callId }) =>
     attempt(() => requireRuntime().autopilot.endCall(callId)),
   );
+
+  // ---- CRM (contacts + call history)
+  // Read-only queries plus one insert; the renderer only ever sees the DTOs
+  // these return, never a handle to the database.
+  ipcMain.handle("crm:available", () => crmStore() !== null);
+
+  ipcMain.handle("crm:contacts", () => {
+    const crm = crmStore();
+    if (!crm) return [];
+    // One roll-up for every count, rather than a query per contact.
+    const groups = new Map(
+      crm
+        .groupByContact({ includeUnlinked: false })
+        .flatMap((group) => (group.contact ? [[group.contact.id, group] as const] : [])),
+    );
+    return crm.listContacts().map((contact) => {
+      const group = groups.get(contact.id);
+      return {
+        ...contact,
+        callCount: group?.callCount ?? 0,
+        lastCallAt: group?.lastCallAt ?? null,
+      };
+    });
+  });
+
+  ipcMain.handle("crm:calls", (_e, { contactId }: { contactId: unknown }) => {
+    if (typeof contactId !== "string") return [];
+    return crmStore()?.callsForContact(contactId, { limit: CRM_CALL_LIMIT }) ?? [];
+  });
+
+  ipcMain.handle("crm:recent", () => crmStore()?.recentCalls({ limit: CRM_CALL_LIMIT }) ?? []);
+
+  ipcMain.handle("crm:createContact", (_e, input: unknown) => {
+    const crm = crmStore();
+    if (!crm) return { ok: false, error: "No contact database on this runtime." };
+    try {
+      return { ok: true, contact: crm.createContact(parseContactInput(input)) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
 
   // ---- settings (usable even when the runtime failed to start)
   ipcMain.handle("settings:get", () => requireSettings().redacted());

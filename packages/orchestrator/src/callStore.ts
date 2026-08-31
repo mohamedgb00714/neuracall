@@ -115,9 +115,21 @@ function query(
  * record still being built by a live call is snapshotted, not aliased).
  */
 function clone(record: CallRecord): CallRecord {
-  return {
+  const copy: CallRecord = {
     ...record,
     transcript: record.transcript.map((t) => ({ ...t })),
     states: record.states.map((s) => ({ ...s })),
   };
+  // `postCall` is nested and arrived later than the fields above; a shallow
+  // spread would hand every caller the same object and quietly break the
+  // "hands out copies" guarantee for it alone.
+  if (record.postCall) {
+    copy.postCall = {
+      ...record.postCall,
+      ...(record.postCall.utterances
+        ? { utterances: record.postCall.utterances.map((u) => ({ ...u })) }
+        : {}),
+    };
+  }
+  return copy;
 }

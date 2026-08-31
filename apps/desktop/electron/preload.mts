@@ -87,6 +87,50 @@ interface CallRecordMsg {
   error?: string;
 }
 
+interface ContactPhoneMsg {
+  e164: string;
+  suffix: string;
+  raw: string;
+}
+
+/** Mirrors `Contact` in @neuracall/crm, which is where the shape is defined. */
+interface ContactMsg {
+  id: string;
+  displayName: string;
+  org: string | null;
+  notes: string | null;
+  createdAt: number;
+  updatedAt: number;
+  phones: ContactPhoneMsg[];
+  tags: string[];
+}
+
+/** A contact carrying the call roll-up the list column shows. */
+interface ContactSummaryMsg extends ContactMsg {
+  callCount: number;
+  /** ms since epoch of the most recent linked call; null when there are none. */
+  lastCallAt: number | null;
+}
+
+/** A call record with the contact it was linked to, if any. */
+interface CrmCallMsg extends CallRecordMsg {
+  contactId: string | null;
+}
+
+interface CreateContactMsg {
+  displayName: string;
+  org?: string;
+  notes?: string;
+  phones?: string[];
+  tags?: string[];
+}
+
+interface CreateContactResult {
+  ok: boolean;
+  contact?: ContactMsg;
+  error?: string;
+}
+
 /**
  * Settings as the renderer sees them: every apiKey blanked, with `hasApiKey`
  * reporting whether one is stored. Mirrors `RedactedSettings` in
@@ -205,6 +249,18 @@ const api = {
     ipcRenderer.invoke("call:state", { deviceId }),
 
   captureStatus: (): Promise<CaptureMsg[]> => ipcRenderer.invoke("capture:status"),
+
+  // ---- CRM
+  // Every query runs in the main process; the renderer never gets a database
+  // handle. `crmAvailable` is false on a runtime without node:sqlite, where
+  // calls go to JSONL and there are no contacts to show.
+  crmAvailable: (): Promise<boolean> => ipcRenderer.invoke("crm:available"),
+  crmContacts: (): Promise<ContactSummaryMsg[]> => ipcRenderer.invoke("crm:contacts"),
+  crmCalls: (contactId: string): Promise<CrmCallMsg[]> =>
+    ipcRenderer.invoke("crm:calls", { contactId }),
+  crmRecentCalls: (): Promise<CrmCallMsg[]> => ipcRenderer.invoke("crm:recent"),
+  crmCreateContact: (input: CreateContactMsg): Promise<CreateContactResult> =>
+    ipcRenderer.invoke("crm:createContact", input),
 
   // ---- settings
   // Asymmetric on purpose: a key can be sent in but never comes back out. In

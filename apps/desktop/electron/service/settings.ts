@@ -436,7 +436,14 @@ export class SettingsStore {
       chmodSync(tmp, 0o600);
       renameSync(tmp, this.file);
     } catch (err) {
-      rmSync(tmp, { force: true });
+      // Cleaning up the temp file must not mask why the save failed: an
+      // ENOTDIR from rmSync would replace "Could not write <file>" with an
+      // unrelated error about a path the operator never named.
+      try {
+        rmSync(tmp, { force: true });
+      } catch {
+        /* the temp file is not the problem being reported */
+      }
       throw new Error(`Could not write ${this.file}: ${describe(err)}`);
     }
   }

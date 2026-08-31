@@ -215,6 +215,12 @@ export class Runtime extends EventEmitter {
         sessions: this.manager,
         runner: this.runner,
         dataDir: this.opts.dataDir ?? resolve(process.cwd(), "data"),
+        // Off unless explicitly asked for: every finished call becomes a paid
+        // upload to the pre-recorded API.
+        postCallAnalytics: process.env["NEURACALL_POST_CALL"] === "1",
+        ...(process.env["NEURACALL_SUMMARY_MODEL"]
+          ? { summaryModel: process.env["NEURACALL_SUMMARY_MODEL"] }
+          : {}),
         audioSource: this.captureSource,
         realtimeMode: assemblyai.mode,
         keyterms: assemblyai.keyterms,

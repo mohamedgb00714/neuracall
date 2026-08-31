@@ -4,13 +4,15 @@ import { DevicePanel } from "./components/DevicePanel";
 import { TranscriptView } from "./components/TranscriptView";
 import { ToolsNotice } from "./components/ToolsNotice";
 import { AutopilotPanel } from "./components/AutopilotPanel";
+import { ContactsPage } from "./components/ContactsPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { useLiveTranscript } from "./hooks/useLiveTranscript";
 
-type Tab = "calls" | "settings";
+type Tab = "calls" | "contacts" | "settings";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "calls", label: "Calls" },
+  { id: "contacts", label: "Contacts" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -68,8 +70,8 @@ export function App() {
         ))}
       </nav>
 
-      {/* Both panels stay mounted: switching tabs must not drop the device
-          subscriptions or throw away half-typed settings. */}
+      {/* Every panel stays mounted: switching tabs must not drop the device
+          subscriptions or throw away a half-typed contact or setting. */}
       <div className="tab-panel" hidden={tab !== "calls"}>
         <ToolsNotice />
         <main className="layout">
@@ -81,6 +83,10 @@ export function App() {
             <TranscriptView turns={turns} sessions={sessions} />
           </section>
         </main>
+      </div>
+
+      <div className="tab-panel" hidden={tab !== "contacts"}>
+        <ContactsPage />
       </div>
 
       <div className="tab-panel" hidden={tab !== "settings"}>

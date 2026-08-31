@@ -33,6 +33,70 @@ export interface TranscriptEntry {
   turnOrder?: number;
 }
 
+/** How post-call analysis ended. See `PostCallProcessor`. */
+export type PostCallStatus =
+  /** A transcript was produced (a summary too, unless it was not configured). */
+  | "completed"
+  /** Deliberately not attempted — see `skipReason`. Nothing was spent. */
+  | "skipped"
+  /** Attempted and failed. `error` says how. */
+  | "failed";
+
+/** Why post-call analysis was skipped before spending anything on an upload. */
+export type PostCallSkipReason =
+  /** The call was never recorded. */
+  | "no-audio"
+  /** `audioPath` points at nothing — deleted, or on a volume that went away. */
+  | "audio-missing"
+  /** The file is there but is not a readable PCM WAV. */
+  | "audio-unreadable"
+  /** Shorter than the configured minimum: a misdial, not a conversation. */
+  | "too-short";
+
+/** One diarized utterance from the post-call transcript. */
+export interface PostCallUtterance {
+  /** The diarizer's label ("A", "B"), not a NeuraCall role. */
+  speaker: string;
+  text: string;
+  /** ms from the start of the recording. */
+  start: number;
+  end: number;
+  confidence: number;
+}
+
+/**
+ * The result of post-call analysis, stored on the record it describes.
+ *
+ * Every field past `status` is optional because this is written whatever
+ * happened: a skip carries only a reason, and a failure only an error.
+ */
+export interface PostCallAnalysis {
+  status: PostCallStatus;
+  /** ms since epoch, when analysis finished. */
+  at: number;
+  /** How long analysis took, including the upload. */
+  durationMs: number;
+  /** The AssemblyAI transcript id, for looking the job up later. */
+  transcriptId?: string;
+  /** The full transcript as one block of text. */
+  text?: string;
+  utterances?: PostCallUtterance[];
+  summary?: string;
+  /** The exact LLM Gateway model id that produced `summary`. */
+  summaryModel?: string;
+  /** Set when the transcript succeeded but summarising it did not. */
+  summaryError?: string;
+  /** Recording length in seconds, as reported by the API or the WAV header. */
+  audioDurationSec?: number;
+  languageCode?: string;
+  /** Set when `status` is "skipped". */
+  skipReason?: PostCallSkipReason;
+  /** Human-readable detail for the skip (which path, how short). */
+  skipDetail?: string;
+  /** Set when `status` is "failed". */
+  error?: string;
+}
+
 /** The persisted record of a call. One row per call. */
 export interface CallRecord {
   callId: string;
@@ -58,6 +122,12 @@ export interface CallRecord {
   states: Array<{ state: CallState; at: number; reason?: string }>;
   /** Set when the call failed. */
   error?: string;
+  /**
+   * Post-call analysis, attached after the call ended. Absent while the call is
+   * live, when analytics are switched off, and on every record written before
+   * this existed — nothing may require it.
+   */
+  postCall?: PostCallAnalysis;
 }
 
 /**

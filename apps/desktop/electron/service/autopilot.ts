@@ -2,7 +2,12 @@ import { EventEmitter } from "node:events";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AppConfig } from "@neuracall/config";
-import type { RealtimeMode, RealtimeSessionManager } from "@neuracall/aai-client";
+import {
+  LlmGatewayClient,
+  PrerecordedClient,
+  type RealtimeMode,
+  type RealtimeSessionManager,
+} from "@neuracall/aai-client";
 import {
   AdbCallChannelDetector,
   AndroidCallController,
@@ -24,6 +29,7 @@ import {
   Metrics,
   NullAudioInjector,
   Orchestrator,
+  PostCallProcessor,
   ScrcpyAudioCapture,
   Watchdog,
   createHealthServer,
@@ -35,6 +41,7 @@ import {
   type CallRecordStore,
   type HealthServer,
   type MetricsSnapshot,
+  type PostCallResult,
 } from "@neuracall/orchestrator";
 
 /** Value `.env.example` ships for every unset key; treat it as unconfigured. */
@@ -91,6 +98,14 @@ export interface AutopilotOptions {
    * number still links to the contact holding its E.164 form.
    */
   defaultCountryCode?: string;
+  /**
+   * LLM Gateway model id used to summarise finished calls. Omit and calls are
+   * still transcribed post-hoc but not summarised — the ids are exact
+   * versioned strings, so there is deliberately no default to rot.
+   */
+  summaryModel?: string;
+  /** Run post-call transcription/summary after each call. Default false. */
+  postCallAnalytics?: boolean;
 }
 
 export interface AutopilotStatus {
@@ -147,6 +162,12 @@ export class Autopilot extends EventEmitter {
   readonly crm: CrmStore | null;
   /** Where call records go — the CRM when it exists, JSONL otherwise. */
   private readonly store: CallRecordStore;
+  private readonly postCall: PostCallProcessor | null;
+  /**
+   * Calls already handed to post-call analysis. Each one is a paid upload, so
+   * a repeated "ended" record must not queue a second job.
+   */
+  private readonly analysed = new Set<string>();
   private health: HealthServer | null = null;
   private running = false;
   private handled = 0;
@@ -221,7 +242,15 @@ export class Autopilot extends EventEmitter {
       watchIntervalMs: opts.pollIntervalMs ?? 1500,
     });
 
-    this.orchestrator.on("call", (record: CallRecord) => this.emit("call", record));
+    this.orchestrator.on("call", (record: CallRecord) => {
+      this.emit("call", record);
+      // The final record is the one carrying audioPath and the full transcript,
+      // so analysis is queued from here rather than from the state transition.
+      if (record.state === "ended" && this.postCall && !this.analysed.has(record.callId)) {
+        this.analysed.add(record.callId);
+        void this.postCall.process(record);
+      }
+    });
     this.orchestrator.on("state", (callId: string, state: string, reason?: string) => {
       if (state === "ended") this.handled += 1;
       this.emit("state", callId, state, reason);
@@ -232,6 +261,24 @@ export class Autopilot extends EventEmitter {
     this.orchestrator.on("error", (err: Error, callId?: string) =>
       this.emit("error", err.message, callId),
     );
+
+    // Post-call analytics: the recorded WAV goes back through the pre-recorded
+    // API for a speaker-labelled transcript, then optionally the LLM Gateway
+    // for a summary. Off by default because every finished call becomes a paid
+    // upload, and it never touches a live call — failures are recorded on the
+    // record, never thrown.
+    this.postCall = opts.postCallAnalytics
+      ? new PostCallProcessor({
+          transcriber: new PrerecordedClient(opts.config),
+          summarizer: new LlmGatewayClient(opts.config),
+          store: this.store,
+          ...(opts.summaryModel ? { summaryModel: opts.summaryModel } : {}),
+          onResult: (result: PostCallResult) =>
+            this.emit("postCall", result.callId, result.status, result.summary ?? null),
+          onError: (result: PostCallResult) =>
+            this.emit("error", `post-call analysis failed: ${result.error ?? "unknown"}`, result.callId),
+        })
+      : null;
 
     this.metrics = new Metrics();
     this.metrics.attach(this.orchestrator);
