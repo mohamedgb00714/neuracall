@@ -26,6 +26,12 @@ import {
 } from "@neuracall/scrcpy-bridge";
 import { DeviceAudioCapture, type CaptureSession } from "./capture.js";
 import { Autopilot, type AutopilotStatus } from "./autopilot.js";
+import {
+  buildAppConfig,
+  defaultSettings,
+  mergeTtsEnv,
+  type NeuraCallSettings,
+} from "./settings.js";
 
 export interface TurnKeyed {
   key: SessionKey;
@@ -39,17 +45,15 @@ export interface RuntimeOptions {
   knownEndpoints?: string[];
   /** Telephony call-state poll interval per online phone (ms). 0 disables. Default 2000. */
   callPollIntervalMs?: number;
-  /** scrcpy audio source used for call capture. Default "mic". */
+  /** Overrides the settings' capture source. Mostly for tests. */
   audioSource?: ScrcpyAudioSource;
   /** App data root for recordings and the call log. Default "<cwd>/data". */
   dataDir?: string;
   /**
-   * Audio sink the agent's voice is played into (normally a Bluetooth HFP sink
-   * the phone treats as its headset). Unset means the caller hears nothing.
+   * Operator-editable settings (region, LLM, TTS, audio, autopilot limits).
+   * Defaults are used when omitted; `reloadSettings` swaps them at runtime.
    */
-  injectSink?: string;
-  /** Bind the operator health/metrics endpoint on this loopback port. */
-  healthPort?: number;
+  settings?: NeuraCallSettings;
 }
 
 export interface CaptureUpdate extends CaptureSession {
@@ -72,12 +76,18 @@ export interface CaptureUpdate extends CaptureSession {
  *  - "capture-log" (deviceId, line, isError)
  */
 export class Runtime extends EventEmitter {
-  readonly config: AppConfig;
+  /**
+   * Mutated in place by `reloadSettings` rather than replaced: the session
+   * manager captured this object at construction and reads it when it opens a
+   * socket, so a new region or speech model has to land *inside* it to reach
+   * the next call.
+   */
+  private readonly appConfig: AppConfig;
+  private settings: NeuraCallSettings;
   private readonly manager: RealtimeSessionManager;
   private readonly devices: DeviceManager;
   private readonly runner: CommandRunner;
   private readonly capture: DeviceAudioCapture;
-  private readonly audioSource: ScrcpyAudioSource;
   private readonly callPollIntervalMs: number;
   private callTimer: NodeJS.Timeout | null = null;
   private callPolling = false;
@@ -87,9 +97,9 @@ export class Runtime extends EventEmitter {
 
   constructor(config: AppConfig, opts: RuntimeOptions = {}) {
     super();
-    this.config = config;
+    this.appConfig = config;
+    this.settings = opts.settings ?? defaultSettings();
     this.opts = opts;
-    this.audioSource = opts.audioSource ?? "mic";
     this.callPollIntervalMs = opts.callPollIntervalMs ?? 2000;
     this.manager = new RealtimeSessionManager(config, {
       maxConcurrent: 10,
@@ -141,6 +151,25 @@ export class Runtime extends EventEmitter {
     this.devices.on("phase", (id, phase) => this.emit("phase", id, phase));
   }
 
+  /** The resolved AssemblyAI/LLM/TTS config currently in force. */
+  get config(): AppConfig {
+    return this.appConfig;
+  }
+
+  /** The operator settings currently in force. */
+  get currentSettings(): NeuraCallSettings {
+    return this.settings;
+  }
+
+  /**
+   * scrcpy `--audio-source` for call capture. The settings type keeps it a
+   * plain string so the renderer needs no scrcpy types; `parseSettingsPatch`
+   * is what guarantees it is one of scrcpy's values.
+   */
+  private get captureSource(): ScrcpyAudioSource {
+    return this.opts.audioSource ?? (this.settings.audio.captureSource as ScrcpyAudioSource);
+  }
+
   /** Begin polling for ADB devices and their call state. */
   start(): void {
     this.devices.start();
@@ -179,16 +208,30 @@ export class Runtime extends EventEmitter {
    */
   get autopilot(): Autopilot {
     if (!this.autopilotInstance) {
-      const opts = this.opts;
+      const { assemblyai, llm, audio, autopilot } = this.settings;
       this.autopilotInstance = new Autopilot({
-        config: this.config,
+        config: this.appConfig,
         devices: this.devices,
         sessions: this.manager,
         runner: this.runner,
-        dataDir: opts.dataDir ?? resolve(process.cwd(), "data"),
-        ...(opts.audioSource !== undefined ? { audioSource: opts.audioSource } : {}),
-        ...(opts.injectSink !== undefined ? { injectSink: opts.injectSink } : {}),
-        ...(opts.healthPort !== undefined ? { healthPort: opts.healthPort } : {}),
+        dataDir: this.opts.dataDir ?? resolve(process.cwd(), "data"),
+        audioSource: this.captureSource,
+        realtimeMode: assemblyai.mode,
+        keyterms: assemblyai.keyterms,
+        maxCallMs: autopilot.maxCallMs,
+        stallMs: autopilot.stallMs,
+        // Settings sit above the environment, but only where they say
+        // something: the merged env keeps hints that have no UI (PIPER_MODEL,
+        // TTS_COMMAND) working.
+        ttsEnv: mergeTtsEnv(process.env, this.settings),
+        ...(audio.injectSink ? { injectSink: audio.injectSink } : {}),
+        ...(autopilot.healthPort !== null ? { healthPort: autopilot.healthPort } : {}),
+        ...(autopilot.defaultCountryCode
+          ? { defaultCountryCode: autopilot.defaultCountryCode }
+          : {}),
+        ...(llm.baseUrl ? { llmBaseUrl: llm.baseUrl } : {}),
+        ...(llm.greeting ? { greeting: llm.greeting } : {}),
+        ...(llm.systemPrompt ? { systemPrompt: llm.systemPrompt } : {}),
       });
       this.autopilotInstance.on("call", (record) => this.emit("autopilot-call", record));
       this.autopilotInstance.on("state", (callId, state, reason) =>
@@ -217,6 +260,54 @@ export class Runtime extends EventEmitter {
     return this.autopilot.status();
   }
 
+  /**
+   * Whether new settings can be applied right now.
+   *
+   * Applying them tears the Autopilot down and rebuilds it — new LLM client,
+   * new TTS provider, new watchdog limits — which would drop whoever is on the
+   * line, so a call in flight is a hard refusal rather than a best effort.
+   */
+  assertReloadable(): void {
+    const active = this.autopilotInstance?.activeCalls.length ?? 0;
+    if (active > 0) {
+      throw new Error(
+        `Cannot apply settings while ${active} call${active === 1 ? " is" : "s are"} in progress — ` +
+          `rebuilding the agent would drop the caller. End the call and try again.`,
+      );
+    }
+  }
+
+  /**
+   * Adopt new settings without restarting the app: the AssemblyAI region and
+   * model reach the next session through the shared config object, and the
+   * Autopilot is rebuilt so a changed LLM key or TTS provider takes effect. An
+   * Autopilot that was answering calls is left answering them.
+   */
+  async reloadSettings(settings: NeuraCallSettings): Promise<void> {
+    this.assertReloadable();
+    this.settings = settings;
+    this.applyConfig(settings);
+
+    const previous = this.autopilotInstance;
+    if (!previous) return; // never built; the next `get autopilot` uses the new settings
+    const wasEnabled = previous.enabled;
+    this.autopilotInstance = null;
+    await previous.shutdown();
+    if (wasEnabled) this.enableAutopilot();
+  }
+
+  /** Fold settings into the shared AppConfig object, in place. */
+  private applyConfig(settings: NeuraCallSettings): void {
+    const merged = buildAppConfig(this.appConfig.assemblyai.apiKey, settings);
+    Object.assign(this.appConfig.assemblyai, merged.assemblyai);
+    // Assigned field by field rather than merged: a cleared key is absent from
+    // `merged`, and Object.assign would leave the old one in place.
+    this.appConfig.llm.apiKey = merged.llm.apiKey;
+    this.appConfig.llm.model = merged.llm.model;
+    this.appConfig.tts.apiKey = merged.tts.apiKey;
+    this.appConfig.tts.model = merged.tts.model;
+  }
+
   // ---------------------------------------------------------------- STT
 
   /**
@@ -228,13 +319,15 @@ export class Runtime extends EventEmitter {
     channelId: string,
     opts: { capture?: boolean; source?: ScrcpyAudioSource } = {},
   ) {
+    const keyterms = this.settings.assemblyai.keyterms;
     const stream = await this.manager.open(
       { deviceId, channelId },
       {
         params: {
           sampleRate: 16000,
-          speechModel: this.config.assemblyai.speechModel,
-          mode: "balanced",
+          speechModel: this.appConfig.assemblyai.speechModel,
+          mode: this.settings.assemblyai.mode,
+          ...(keyterms.length > 0 ? { keyterms_prompt: keyterms } : {}),
         },
       },
     );
@@ -250,7 +343,7 @@ export class Runtime extends EventEmitter {
         );
       } else {
         try {
-          this.capture.attach(deviceId, deviceId, channelId, opts.source ?? this.audioSource);
+          this.capture.attach(deviceId, deviceId, channelId, opts.source ?? this.captureSource);
         } catch (err) {
           this.emit("capture-log", deviceId, `capture failed to start: ${String(err)}`, true);
         }

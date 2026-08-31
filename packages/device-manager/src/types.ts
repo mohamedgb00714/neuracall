@@ -28,8 +28,32 @@ export interface Device {
   updatedAt: number;
 }
 
-/** The kind of inbound call. */
-export type ChannelKind = "cellular" | "whatsapp";
+/**
+ * The kind of inbound call.
+ *
+ * Cellular comes from telephony; everything else is a VoIP app identified by
+ * the package that owns the device's audio mode. `"voip"` is the catch-all for
+ * a calling app that is not in the registry — a call on an unknown app is
+ * still a call, and is handled identically. See `callingApps.ts`.
+ */
+export type ChannelKind =
+  | "cellular"
+  | "whatsapp"
+  | "telegram"
+  | "signal"
+  | "messenger"
+  | "instagram"
+  | "viber"
+  | "skype"
+  | "teams"
+  | "zoom"
+  | "meet"
+  | "imo"
+  | "botim"
+  | "discord"
+  | "line"
+  | "wechat"
+  | "voip";
 
 /** Telephony call state as reported by `dumpsys telephony.registry` (mCallState). */
 export type CallState = "idle" | "ringing" | "offhook" | "unknown";

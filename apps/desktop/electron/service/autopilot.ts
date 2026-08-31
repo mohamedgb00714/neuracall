@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AppConfig } from "@neuracall/config";
-import type { RealtimeSessionManager } from "@neuracall/aai-client";
+import type { RealtimeMode, RealtimeSessionManager } from "@neuracall/aai-client";
 import {
   AdbCallChannelDetector,
   AndroidCallController,
@@ -64,6 +64,18 @@ export interface AutopilotOptions {
   pollIntervalMs?: number;
   greeting?: string;
   systemPrompt?: string;
+  /** OpenAI-compatible API root for the LLM. Default OpenRouter. */
+  llmBaseUrl?: string;
+  /**
+   * Environment `selectTtsClient` reads its provider hints from. Pass the
+   * settings-derived one to configure TTS from the UI; omit to use the real
+   * environment.
+   */
+  ttsEnv?: NodeJS.ProcessEnv;
+  /** Latency/accuracy preset for the realtime socket. */
+  realtimeMode?: RealtimeMode;
+  /** Terms biasing recognition on every turn (brand names, SKUs). */
+  keyterms?: string[];
   /**
    * Bind the operator health/metrics endpoint on this port. Omit to leave it
    * off — it is bound to loopback, but an endpoint nobody asked for is still
@@ -143,13 +155,16 @@ export class Autopilot extends EventEmitter {
     super();
     this.opts = opts;
 
-    const llm = buildLlmClient(opts.config);
+    const llm = buildLlmClient(opts.config, opts.llmBaseUrl);
     this.llmConfigured = llm !== null;
 
     // Falls back to SilentTts when nothing is configured, which keeps the loop
     // honest: silence of the right *duration* means turn pacing and the
     // barge-in window behave as they will with real speech.
-    const tts = selectTtsClient(opts.config, { sampleRate: 16000 });
+    const tts = selectTtsClient(opts.config, {
+      sampleRate: 16000,
+      ...(opts.ttsEnv ? { env: opts.ttsEnv } : {}),
+    });
     this.ttsConfigured = tts.provider !== "silent";
     this.ttsDescription = tts.description;
 
@@ -159,6 +174,7 @@ export class Autopilot extends EventEmitter {
           tts: tts.client,
           ...(opts.greeting !== undefined ? { greeting: opts.greeting } : {}),
           ...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
+          ...(opts.keyterms && opts.keyterms.length > 0 ? { keyterms: opts.keyterms } : {}),
         })
       : new TranscribeOnlyAgent();
 
@@ -197,6 +213,10 @@ export class Autopilot extends EventEmitter {
       store: this.store,
       recordingsDir: opts.dataDir,
       speechModel: opts.config.assemblyai.speechModel,
+      realtimeParams: {
+        ...(opts.realtimeMode !== undefined ? { mode: opts.realtimeMode } : {}),
+        ...(opts.keyterms && opts.keyterms.length > 0 ? { keyterms_prompt: opts.keyterms } : {}),
+      },
       injectorFor: () => this.buildInjector(),
       watchIntervalMs: opts.pollIntervalMs ?? 1500,
     });
@@ -354,9 +374,9 @@ export class Autopilot extends EventEmitter {
 }
 
 /** Build the LLM client, or null when the config still holds placeholders. */
-function buildLlmClient(config: AppConfig): LlmClient | null {
+function buildLlmClient(config: AppConfig, baseUrl?: string): LlmClient | null {
   const apiKey = config.llm.apiKey;
   const model = config.llm.model;
   if (!apiKey || !model || model === PLACEHOLDER) return null;
-  return new OpenAiCompatibleLlmClient({ apiKey, model });
+  return new OpenAiCompatibleLlmClient({ apiKey, model, ...(baseUrl ? { baseUrl } : {}) });
 }

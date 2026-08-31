@@ -33,7 +33,11 @@ test("e2e: an inbound cellular call is detected, answered, transcribed and recor
       DEFAULT_ENDPOINT,
       new (await import("@neuracall/device-manager")).AdbCallChannelDetector(h.adb),
     );
-    assert.deepEqual(detected, { present: true, channel: "cellular" });
+    // Field-wise rather than deepEqual: the detector adds informational fields
+    // (stage, ownerPackage) over time, and a strict match would fail on a
+    // purely additive change that breaks nothing.
+    assert.equal(detected.present, true);
+    assert.equal(detected.channel, "cellular");
 
     const call = h.orchestrator.handleIncomingCall(DEFAULT_ENDPOINT, "cellular");
 

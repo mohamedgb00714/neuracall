@@ -5,10 +5,22 @@ export {
   AdbCallChannelDetector,
   isWhatsAppPackage,
   hasIncomingCallUi,
+  parseForegroundPackage,
+  parseAudioMode,
+  parseAudioModeOwner,
+  parseAudioModeState,
+  isVoipCallActive,
   WHATSAPP_APP_ID,
   WHATSAPP_BUSINESS_APP_ID,
 } from "./whatsAppDetector.js";
-export type { CallChannelDetector, DetectedIncomingCall } from "./whatsAppDetector.js";
+export type {
+  CallChannelDetector,
+  DetectedIncomingCall,
+  CallStage,
+  AudioMode,
+  AudioModeState,
+} from "./whatsAppDetector.js";
 export { realRunner, defaultSpawner } from "./adb.js";
 export type { CommandRunner, Spawner } from "./adb.js";
+export * from "./callingApps.js";
 export * from "./types.js";

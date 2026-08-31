@@ -87,6 +87,61 @@ interface CallRecordMsg {
   error?: string;
 }
 
+/**
+ * Settings as the renderer sees them: every apiKey blanked, with `hasApiKey`
+ * reporting whether one is stored. Mirrors `RedactedSettings` in
+ * electron/service/settings.ts, which is where the shape is defined.
+ */
+interface RedactedSettingsMsg {
+  assemblyai: {
+    region: "us" | "eu" | "edge";
+    speechModel: string;
+    mode: "min_latency" | "balanced" | "max_accuracy";
+    keyterms: string[];
+  };
+  llm: {
+    apiKey: string;
+    hasApiKey: boolean;
+    model: string;
+    baseUrl: string;
+    systemPrompt: string;
+    greeting: string;
+  };
+  tts: {
+    provider: "auto" | "openai" | "elevenlabs" | "command" | "silent";
+    apiKey: string;
+    hasApiKey: boolean;
+    model: string;
+    voice: string;
+    baseUrl: string;
+  };
+  audio: { captureSource: string; injectSink: string };
+  autopilot: {
+    maxCallMs: number;
+    stallMs: number;
+    defaultCountryCode: string;
+    healthPort: number | null;
+  };
+}
+
+interface ProbeResultMsg {
+  ok: boolean;
+  /** Human-readable; scrubbed of every configured key in the main process. */
+  detail: string;
+}
+
+interface ProbeReportMsg {
+  assemblyai: ProbeResultMsg;
+  llm: ProbeResultMsg;
+  tts: ProbeResultMsg;
+}
+
+interface SaveSettingsResult {
+  ok: boolean;
+  settings?: RedactedSettingsMsg;
+  error?: string;
+}
+
 function subscribe<T>(channel: string) {
   return (cb: (msg: T) => void) => {
     const listener = (_e: unknown, msg: T) => cb(msg);
@@ -151,6 +206,16 @@ const api = {
 
   captureStatus: (): Promise<CaptureMsg[]> => ipcRenderer.invoke("capture:status"),
 
+  // ---- settings
+  // Asymmetric on purpose: a key can be sent in but never comes back out. In
+  // a patch an apiKey of "" leaves the stored key alone (so round-tripping the
+  // redacted view is safe), a non-empty string replaces it, and null clears it.
+  getSettings: (): Promise<RedactedSettingsMsg> => ipcRenderer.invoke("settings:get"),
+  saveSettings: (patch: unknown): Promise<SaveSettingsResult> =>
+    ipcRenderer.invoke("settings:save", patch),
+  resetSettings: (): Promise<RedactedSettingsMsg> => ipcRenderer.invoke("settings:reset"),
+  probeSettings: (): Promise<ProbeReportMsg> => ipcRenderer.invoke("settings:probe"),
+
   // ---- autopilot
   enableAutopilot: (): Promise<{ ok: boolean; status?: AutopilotStatusMsg; error?: string }> =>
     ipcRenderer.invoke("autopilot:enable"),
@@ -176,6 +241,7 @@ const api = {
     "autopilot:transcript",
   ),
   onAutopilotError: subscribe<{ message: string; callId?: string }>("autopilot:error"),
+  onSettingsChanged: subscribe<RedactedSettingsMsg>("settings:changed"),
 };
 
 contextBridge.exposeInMainWorld("neuracall", api);

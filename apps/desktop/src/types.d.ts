@@ -89,6 +89,94 @@ export interface CallRecord {
   error?: string;
 }
 
+export type AssemblyAIRegion = "us" | "eu" | "edge";
+export type TranscriptionMode = "min_latency" | "balanced" | "max_accuracy";
+export type TtsProvider = "auto" | "openai" | "elevenlabs" | "command" | "silent";
+
+/** The persisted settings document (owned by electron/service/settings.ts). */
+export interface NeuraCallSettings {
+  assemblyai: {
+    region: AssemblyAIRegion;
+    speechModel: string;
+    mode: TranscriptionMode;
+    /** Bias terms sent with the stream, max 100. */
+    keyterms: string[];
+  };
+  llm: {
+    apiKey: string;
+    model: string;
+    baseUrl: string;
+    systemPrompt: string;
+    greeting: string;
+  };
+  tts: {
+    provider: TtsProvider;
+    apiKey: string;
+    model: string;
+    voice: string;
+    baseUrl: string;
+  };
+  audio: {
+    /** scrcpy --audio-source. */
+    captureSource: string;
+    /** "" turns injection off. */
+    injectSink: string;
+  };
+  autopilot: {
+    maxCallMs: number;
+    stallMs: number;
+    defaultCountryCode: string;
+    healthPort: number | null;
+  };
+}
+
+/**
+ * What the renderer is allowed to read. Every `apiKey` comes back as "" and the
+ * sibling `hasApiKey` says whether one is stored — a secret never crosses the
+ * bridge in this direction.
+ */
+export type RedactedSettings = Omit<NeuraCallSettings, "llm" | "tts"> & {
+  llm: NeuraCallSettings["llm"] & { hasApiKey: boolean };
+  tts: NeuraCallSettings["tts"] & { hasApiKey: boolean };
+};
+
+export type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends readonly unknown[]
+    ? T[K]
+    : T[K] extends object
+      ? DeepPartial<T[K]>
+      : T[K];
+};
+
+/**
+ * A save patch. Writing is deliberately asymmetric with reading: an `apiKey` of
+ * "" means LEAVE THE STORED KEY UNCHANGED, so the redacted view can be edited
+ * and sent straight back without wiping a secret it was never shown. A
+ * non-empty string replaces the key; an explicit null clears it.
+ */
+export type SettingsPatch = DeepPartial<Omit<NeuraCallSettings, "llm" | "tts">> & {
+  llm?: DeepPartial<Omit<NeuraCallSettings["llm"], "apiKey">> & { apiKey?: string | null };
+  tts?: DeepPartial<Omit<NeuraCallSettings["tts"], "apiKey">> & { apiKey?: string | null };
+};
+
+/** Outcome of one provider reachability check. `detail` never holds a key. */
+export interface ProbeResult {
+  ok: boolean;
+  detail: string;
+}
+
+export interface SettingsProbe {
+  assemblyai: ProbeResult;
+  llm: ProbeResult;
+  tts: ProbeResult;
+}
+
+export interface SettingsSaveResult {
+  ok: boolean;
+  settings?: RedactedSettings;
+  error?: string;
+}
+
 /** The IPC bridge exposed by the preload script (see electron/preload.mts). */
 export interface NeuraCallBridge {
   getConfigInfo(): Promise<{
@@ -132,6 +220,12 @@ export interface NeuraCallBridge {
     cb: (msg: { callId: string; entry: TranscriptEntry }) => void,
   ): () => void;
   onAutopilotError(cb: (msg: { message: string; callId?: string }) => void): () => void;
+
+  getSettings(): Promise<RedactedSettings>;
+  saveSettings(patch: SettingsPatch): Promise<SettingsSaveResult>;
+  resetSettings(): Promise<RedactedSettings>;
+  probeSettings(): Promise<SettingsProbe>;
+  onSettingsChanged(cb: (settings: RedactedSettings) => void): () => void;
 }
 
 declare global {

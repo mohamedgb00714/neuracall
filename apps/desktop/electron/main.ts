@@ -5,13 +5,21 @@ import { existsSync } from "node:fs";
 import { loadEnv, getConfig, logStartupBanner } from "@neuracall/config";
 import { detectRequiredTools } from "@neuracall/scrcpy-bridge";
 import { Runtime } from "./service/runtime.js";
+import { SettingsStore, buildAppConfig, probeSettings } from "./service/settings.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let mainWindow: BrowserWindow | null = null;
 let runtime: Runtime | null = null;
+let settings: SettingsStore | null = null;
 /** Why the runtime could not start (e.g. missing ASSEMBLYAI_API_KEY). */
 let runtimeError: string | null = null;
+/**
+ * The one setting the UI cannot supply: required before the runtime will start
+ * and validated by @neuracall/config. Kept so the settings probe can still
+ * report on it when the runtime itself never came up.
+ */
+let assemblyAiKey = "";
 
 /**
  * Locate the .env to load: the working directory first, then the repo root
@@ -61,6 +69,17 @@ async function attempt(fn: () => Promise<unknown> | unknown): Promise<{ ok: bool
 function requireRuntime(): Runtime {
   if (!runtime) throw new Error(runtimeError ?? "Runtime not initialised.");
   return runtime;
+}
+
+/** The settings store works even when the runtime failed to start — that is
+ *  usually the moment the operator needs it. */
+function requireSettings(): SettingsStore {
+  if (!settings) throw new Error("Settings store not initialised.");
+  return settings;
+}
+
+function send(channel: string, payload: unknown): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 }
 
 function registerIpc() {
@@ -160,15 +179,49 @@ function registerIpc() {
     attempt(() => requireRuntime().autopilot.endCall(callId)),
   );
 
+  // ---- settings (usable even when the runtime failed to start)
+  ipcMain.handle("settings:get", () => requireSettings().redacted());
+
+  ipcMain.handle("settings:save", async (_e, patch: unknown) => {
+    try {
+      const store = requireSettings();
+      // Checked before anything is written: refusing the save outright is
+      // clearer than persisting settings that silently will not take effect.
+      runtime?.assertReloadable();
+      const saved = store.save(patch);
+      await runtime?.reloadSettings(saved);
+      const redacted = store.redacted();
+      send("settings:changed", redacted);
+      return { ok: true, settings: redacted };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle("settings:reset", async () => {
+    const store = requireSettings();
+    runtime?.assertReloadable();
+    const defaults = store.reset();
+    await runtime?.reloadSettings(defaults);
+    const redacted = store.redacted();
+    send("settings:changed", redacted);
+    return redacted;
+  });
+
+  ipcMain.handle("settings:probe", () => {
+    const store = requireSettings();
+    return probeSettings(
+      runtime?.config ?? buildAppConfig(assemblyAiKey, store.current),
+      store.current,
+    );
+  });
+
   ipcMain.handle("system:shutdown", async () => {
     await runtime?.shutdown();
   });
 }
 
 function wireRuntimeEvents(rt: Runtime) {
-  const send = (channel: string, payload: unknown) => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
-  };
   rt.on("turn", (key, turn) => send("session:turn", { key, turn }));
   rt.on("sessionEnd", (key, reason) => send("session:end", { key, reason }));
   rt.on("error", (key, err) => send("session:error", { key, error: String(err) }));
@@ -198,18 +251,22 @@ app.whenReady().then(() => {
   const envFile = findEnvFile();
   if (envFile) loadEnv(envFile);
 
+  // Settings first: the runtime is built from them, and they must exist even
+  // if it never starts, since fixing them is how the operator recovers.
+  settings = new SettingsStore({ file: join(app.getPath("userData"), "settings.json") });
+  settings.load();
+  for (const problem of settings.problems) console.warn(`[neuracall] ${problem}`);
+
   // A bad/missing .env must not prevent the window from opening — the UI
   // reports the config error and the tool checks still work.
   try {
-    // Operator knobs stay in the environment rather than the UI: injecting
-    // agent audio and exposing a metrics port are deployment decisions, not
-    // things to toggle mid-call.
-    const injectSink = process.env.NEURACALL_INJECT_SINK?.trim();
-    const healthPort = Number(process.env.NEURACALL_HEALTH_PORT);
-    runtime = new Runtime(getConfig(), {
+    // Only the AssemblyAI key comes from the environment; region, model, LLM,
+    // TTS, audio and the autopilot limits all come from the settings file so
+    // they can be changed without editing .env.
+    assemblyAiKey = getConfig().assemblyai.apiKey;
+    runtime = new Runtime(buildAppConfig(assemblyAiKey, settings.current), {
       dataDir: resolve(app.getPath("userData"), "data"),
-      ...(injectSink ? { injectSink } : {}),
-      ...(Number.isInteger(healthPort) && healthPort > 0 ? { healthPort } : {}),
+      settings: settings.current,
     });
     logStartupBanner(runtime.config); // region + endpoints, key masked
     runtime.start(); // begin poll-based ADB discovery + call-state polling
