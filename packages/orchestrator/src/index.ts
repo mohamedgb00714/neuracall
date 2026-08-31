@@ -8,3 +8,4 @@ export * from "./metrics.js";
 export * from "./watchdog.js";
 export * from "./health.js";
 export * from "./postCall.js";
+export * from "./voiceAgentBridge.js";
