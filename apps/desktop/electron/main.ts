@@ -199,8 +199,10 @@ function registerIpc() {
   ipcMain.handle("capture:status", () => runtime?.captureStatus() ?? []);
 
   // ---- autopilot (autonomous answering)
-  // Enabling this makes the app pick up real inbound calls, so it is only ever
-  // driven by an explicit operator action in the UI — never on startup.
+  // This makes the app pick up real inbound calls. It now starts with the app
+  // by default (autopilot.autoStart), so these handlers are the manual override
+  // rather than the only way in — a machine running NeuraCall is a machine
+  // answering the phone unless the operator turns that off.
   ipcMain.handle("autopilot:enable", () => {
     try {
       return { ok: true, status: requireRuntime().enableAutopilot() };

@@ -42,6 +42,7 @@ function form(overrides: Partial<Form> = {}): Form {
     ttsBaseUrl: "",
     captureSource: "",
     injectSink: "",
+    autopilotAutoStart: true,
     maxCallMs: "600000",
     stallMs: "30000",
     defaultCountryCode: "",
@@ -116,4 +117,14 @@ test("clearing a key sends null, not an empty string", () => {
   const untouched = toPatch(form(), [], NUMBERS);
   assert.equal(untouched.llm?.apiKey, "");
   assert.equal(untouched.tts?.apiKey, "");
+});
+
+test("the autopilot auto-start toggle reaches the service", () => {
+  // This one decides whether a machine running NeuraCall answers real phone
+  // calls, so a silent failure to save it is the worst kind of silent failure.
+  assert.equal(toPatch(form({ autopilotAutoStart: true }), [], NUMBERS).autopilot?.autoStart, true);
+  assert.equal(
+    toPatch(form({ autopilotAutoStart: false }), [], NUMBERS).autopilot?.autoStart,
+    false,
+  );
 });

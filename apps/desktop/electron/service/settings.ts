@@ -74,6 +74,17 @@ export interface NeuraCallSettings {
     injectSink: string;
   };
   autopilot: {
+    /**
+     * Start answering inbound calls as soon as the app is up.
+     *
+     * On by default, which is a deliberate change from how this began. It is
+     * still worth being clear about what it means: the app picks up real calls
+     * on real phones with no further confirmation, so a machine that is running
+     * NeuraCall is a machine that is answering the phone. Turn it off in
+     * Settings, or set NEURACALL_AUTOPILOT_AUTOSTART=0, for a console that
+     * watches without acting.
+     */
+    autoStart: boolean;
     maxCallMs: number;
     stallMs: number;
     defaultCountryCode: string;
@@ -201,6 +212,7 @@ export function defaultSettings(): NeuraCallSettings {
     tts: { provider: "auto", apiKey: "", model: "", voice: "", baseUrl: "" },
     audio: { captureSource: "mic", injectSink: "" },
     autopilot: {
+      autoStart: true,
       // The orchestrator's watchdog defaults, restated so the UI has something
       // concrete to show instead of an empty field meaning "whatever it is".
       maxCallMs: 30 * 60_000,
@@ -377,6 +389,9 @@ export function parseSettingsPatch(raw: unknown): SettingsPatch {
   const autopilot = optionalObject(root, "autopilot");
   if (autopilot) {
     const section: SettingsPatch["autopilot"] = {};
+    if ("autoStart" in autopilot) {
+      section.autoStart = boolean(autopilot["autoStart"], "autopilot.autoStart");
+    }
     if ("maxCallMs" in autopilot) {
       section.maxCallMs = integer(
         autopilot["maxCallMs"],
@@ -575,6 +590,9 @@ export function settingsFromEnv(env: NodeJS.ProcessEnv): Record<string, unknown>
       injectSink: clean(env["NEURACALL_INJECT_SINK"]),
     }),
     autopilot: compact({
+      // Left as a raw string for `boolean()` to judge, so a typo is a loud
+      // startup error rather than a silent "off".
+      autoStart: clean(env["NEURACALL_AUTOPILOT_AUTOSTART"]),
       maxCallMs: numeric(env["NEURACALL_MAX_CALL_MS"]),
       stallMs: numeric(env["NEURACALL_STALL_MS"]),
       defaultCountryCode: clean(env["NEURACALL_COUNTRY_CODE"]),

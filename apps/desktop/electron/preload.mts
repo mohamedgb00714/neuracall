@@ -177,6 +177,7 @@ interface RedactedSettingsMsg {
   };
   audio: { captureSource: string; injectSink: string };
   autopilot: {
+    autoStart: boolean;
     maxCallMs: number;
     stallMs: number;
     defaultCountryCode: string;

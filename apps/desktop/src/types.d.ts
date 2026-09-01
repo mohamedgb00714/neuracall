@@ -195,6 +195,7 @@ export interface NeuraCallSettings {
     injectSink: string;
   };
   autopilot: {
+    autoStart: boolean;
     maxCallMs: number;
     stallMs: number;
     defaultCountryCode: string;

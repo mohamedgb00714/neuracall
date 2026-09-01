@@ -86,6 +86,14 @@ export class Runtime extends EventEmitter {
   private readonly devices: DeviceManager;
   private readonly runner: CommandRunner;
   private readonly capture: DeviceAudioCapture;
+  /**
+   * Sessions the operator opened with Listen, as "deviceId/channelId".
+   *
+   * These share a manager with autopilot's, and they deliberately have no call
+   * behind them — which is precisely the shape the watchdog's stray sweep
+   * closes. Membership here is what tells the two apart.
+   */
+  private readonly manualSessions = new Set<string>();
   private readonly callPollIntervalMs: number;
   private callTimer: NodeJS.Timeout | null = null;
   private callPolling = false;
@@ -188,6 +196,22 @@ export class Runtime extends EventEmitter {
     // nothing at all when the feature is unconfigured.
     this.whatsappTextStarted = true;
     void this.whatsappText.start();
+
+    // Answering starts with the app when the operator has asked for it, which
+    // is the default. Building the Autopilot can throw (a bad LLM base URL, a
+    // data directory that cannot be created), and a console that fails to open
+    // is worse than one that opens without answering — so a failure here is
+    // reported and the app carries on.
+    if (this.settings.autopilot.autoStart) {
+      try {
+        this.enableAutopilot();
+      } catch (err) {
+        this.emit(
+          "error",
+          `autopilot did not start: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
   }
 
   /** Present list of adb-attached devices. */
@@ -234,6 +258,11 @@ export class Runtime extends EventEmitter {
         keyterms: assemblyai.keyterms,
         maxCallMs: autopilot.maxCallMs,
         stallMs: autopilot.stallMs,
+        // The Listen button opens sessions on this same manager on purpose,
+        // and a session with no call is exactly what the watchdog's stray
+        // sweep hunts for. Without this it closes them a few seconds after the
+        // operator presses Listen, and the captions just stop.
+        isSessionSweepable: (key) => !this.manualSessions.has(`${key.deviceId}/${key.channelId}`),
         // Settings sit above the environment, but only where they say
         // something: the merged env keeps hints that have no UI (PIPER_MODEL,
         // TTS_COMMAND) working.
@@ -385,18 +414,29 @@ export class Runtime extends EventEmitter {
     channelId: string,
     opts: { capture?: boolean; source?: ScrcpyAudioSource } = {},
   ) {
+    // Marked before the socket opens: the watchdog sweeps on its own timer and
+    // must never see this key unprotected, however slow the open is.
+    this.manualSessions.add(`${deviceId}/${channelId}`);
     const keyterms = this.settings.assemblyai.keyterms;
-    const stream = await this.manager.open(
-      { deviceId, channelId },
-      {
-        params: {
-          sampleRate: 16000,
-          speechModel: this.appConfig.assemblyai.speechModel,
-          mode: this.settings.assemblyai.mode,
-          ...(keyterms.length > 0 ? { keyterms_prompt: keyterms } : {}),
+    let stream;
+    try {
+      stream = await this.manager.open(
+        { deviceId, channelId },
+        {
+          params: {
+            sampleRate: 16000,
+            speechModel: this.appConfig.assemblyai.speechModel,
+            mode: this.settings.assemblyai.mode,
+            ...(keyterms.length > 0 ? { keyterms_prompt: keyterms } : {}),
+          },
         },
-      },
-    );
+      );
+    } catch (err) {
+      // No session was opened, so nothing needs protecting — and leaving the
+      // key in would permanently exempt it from the stray sweep.
+      this.manualSessions.delete(`${deviceId}/${channelId}`);
+      throw err;
+    }
 
     if (opts.capture !== false && !this.capture.has(deviceId)) {
       const scrcpy = detectScrcpy();
@@ -420,6 +460,7 @@ export class Runtime extends EventEmitter {
 
   /** Close (Terminate) a realtime session and stop its audio capture. */
   async stopSession(deviceId: string, channelId: string): Promise<void> {
+    this.manualSessions.delete(`${deviceId}/${channelId}`);
     const cap = this.capture.get(deviceId);
     if (cap && cap.channelId === channelId) this.capture.detach(deviceId);
     await this.manager.close({ deviceId, channelId }, "stopped by user");

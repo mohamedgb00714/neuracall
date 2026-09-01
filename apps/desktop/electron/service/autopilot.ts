@@ -95,6 +95,16 @@ export interface AutopilotOptions {
   /** Silence after which an answered call is assumed dead. */
   stallMs?: number;
   /**
+   * Whether the watchdog may close a session that has no call behind it.
+   * Default: it may close any of them.
+   *
+   * The app shares one `RealtimeSessionManager` between autopilot and the
+   * Listen button, and a Listen session deliberately has no call — so without
+   * this the watchdog treats it as a leak and closes it seconds after the
+   * operator opens it.
+   */
+  isSessionSweepable?: (key: { deviceId: string; channelId: string }) => boolean;
+  /**
    * Country calling code for caller IDs that arrive without one, so a national
    * number still links to the contact holding its E.164 form.
    */
@@ -318,6 +328,7 @@ export class Autopilot extends EventEmitter {
       metrics: this.metrics,
       ...(opts.maxCallMs !== undefined ? { maxCallMs: opts.maxCallMs } : {}),
       ...(opts.stallMs !== undefined ? { stallMs: opts.stallMs } : {}),
+      ...(opts.isSessionSweepable ? { isSweepable: opts.isSessionSweepable } : {}),
       onTeardown: (t) => this.emit("error", `watchdog: ${t.reason}`, t.callId),
       onError: (err) => this.emit("error", `watchdog sweep failed: ${err.message}`),
     });

@@ -62,6 +62,7 @@ function toForm(s: RedactedSettings): Form {
     ttsBaseUrl: s.tts.baseUrl,
     captureSource: s.audio.captureSource,
     injectSink: s.audio.injectSink,
+    autopilotAutoStart: s.autopilot.autoStart,
     maxCallMs: String(s.autopilot.maxCallMs),
     stallMs: String(s.autopilot.stallMs),
     defaultCountryCode: s.autopilot.defaultCountryCode,
@@ -111,6 +112,7 @@ export function SettingsPage() {
   // A checkbox is only labelled if the <label> can name it, so the id has to
   // exist before the early returns below — hooks cannot run after them.
   const voiceAgentToggleId = useId();
+  const autopilotAutoStartId = useId();
   // Ref, not state: the subscription below has to read it without re-running.
   const dirtyRef = useRef(false);
 
@@ -526,6 +528,13 @@ export function SettingsPage() {
 
       <section className="settings-group">
         <h2>Autopilot</h2>
+        <Toggle
+          id={autopilotAutoStartId}
+          label="Answer calls as soon as the app starts"
+          checked={form.autopilotAutoStart}
+          hint="On by default. While this is on, a machine running NeuraCall is a machine answering the phone — real inbound calls are picked up with no further confirmation. Turn it off for a console that watches without acting; you can still start answering by hand from the Calls tab."
+          onChange={(autopilotAutoStart) => patch({ autopilotAutoStart })}
+        />
         <Field label="Max call duration (ms)" hint="Hard stop, however the conversation is going.">
           <input
             type="number"

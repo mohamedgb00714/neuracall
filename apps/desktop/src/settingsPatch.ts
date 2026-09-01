@@ -45,6 +45,7 @@ export interface Form {
   ttsBaseUrl: string;
   captureSource: string;
   injectSink: string;
+  autopilotAutoStart: boolean;
   maxCallMs: string;
   stallMs: string;
   defaultCountryCode: string;
@@ -98,6 +99,7 @@ export function toPatch(form: Form, terms: string[], numbers: ParsedNumbers): Se
       injectSink: form.injectSink.trim(),
     },
     autopilot: {
+      autoStart: form.autopilotAutoStart,
       maxCallMs: numbers.maxCallMs,
       stallMs: numbers.stallMs,
       defaultCountryCode: form.defaultCountryCode.trim(),

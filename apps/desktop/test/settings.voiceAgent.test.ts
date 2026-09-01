@@ -288,3 +288,28 @@ test("the section reaches the renderer whole: there is no secret in it", () => {
   redacted.voiceAgent.agentId = "mutated";
   assert.equal(settings.voiceAgent.agentId, AGENT_ID, "and it is a copy, not the stored object");
 });
+
+test("autopilot answers from startup by default, and the env can turn it off", () => {
+  // The default is deliberately on, and deliberately load-bearing: it is the
+  // difference between an app that watches and an app that picks up the phone.
+  assert.equal(defaultSettings().autopilot.autoStart, true);
+
+  const off = settingsFromEnv({ NEURACALL_AUTOPILOT_AUTOSTART: "0" } as NodeJS.ProcessEnv);
+  assert.equal(
+    (parseSettingsPatch(off).autopilot ?? {}).autoStart,
+    false,
+    "an operator must be able to run a console that does not answer",
+  );
+
+  const on = settingsFromEnv({ NEURACALL_AUTOPILOT_AUTOSTART: "yes" } as NodeJS.ProcessEnv);
+  assert.equal((parseSettingsPatch(on).autopilot ?? {}).autoStart, true);
+
+  // A typo must be loud rather than silently leaving the phone unanswered.
+  assert.throws(
+    () =>
+      parseSettingsPatch(
+        settingsFromEnv({ NEURACALL_AUTOPILOT_AUTOSTART: "ye" } as NodeJS.ProcessEnv),
+      ),
+    /autopilot\.autoStart must be true or false/,
+  );
+});

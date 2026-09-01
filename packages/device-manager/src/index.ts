@@ -25,4 +25,5 @@ export type { CommandRunner, Spawner } from "./adb.js";
 export * from "./callingApps.js";
 export * from "./screen.js";
 export * from "./voipDialer.js";
+export * from "./voipAnswerer.js";
 export * from "./types.js";

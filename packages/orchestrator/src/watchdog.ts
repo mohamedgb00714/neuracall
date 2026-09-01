@@ -88,6 +88,19 @@ export interface WatchdogOptions {
    * opens sessions ahead of their calls.
    */
   strayGraceMs?: number;
+  /**
+   * Whether a session with no call behind it is the watchdog's to close.
+   * Default: all of them.
+   *
+   * The stray sweep exists to catch a session the orchestrator leaked, and it
+   * finds them by looking for sessions with no call record. But the desktop
+   * app's Listen button opens a session on the *same* manager deliberately, to
+   * show live captions with no call in progress — which is indistinguishable
+   * from a leak by that test alone. Without this predicate the watchdog reaps
+   * it a few seconds after the operator presses the button, and the only
+   * symptom is captions that stop.
+   */
+  isSweepable?: (key: { deviceId: string; channelId: string }) => boolean;
   /** Sweep period once `start()` is called. Default 5 s. */
   intervalMs?: number;
   now?: () => number;
@@ -248,6 +261,13 @@ export class Watchdog {
     for (const key of sessions.keys) {
       const id = keyId(key.deviceId, key.channelId);
       if (live.has(id)) {
+        this.strayFirstSeen.delete(id);
+        continue;
+      }
+      // Somebody else opened this on purpose — see `isSweepable`. Forget any
+      // stray age accrued for it, so that turning the protection off later
+      // starts the grace period fresh rather than closing it immediately.
+      if (this.opts.isSweepable && !this.opts.isSweepable(key)) {
         this.strayFirstSeen.delete(id);
         continue;
       }
