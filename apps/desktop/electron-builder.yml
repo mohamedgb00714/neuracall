@@ -1,0 +1,90 @@
+# Packaging for the NeuraCall desktop app.
+#
+# Kept in its own file rather than under a "build" key in package.json, because
+# electron-builder reads package.json to work out what to ship: burying a large
+# config in the same file makes it much harder to see what the app actually
+# depends on.
+#
+# Two things about this repo shape the config:
+#
+#   * It is an npm workspace. The nine @neuracall/* dependencies are symlinks
+#     into packages/, and electron-builder follows them. Each of those packages
+#     declares "files": ["dist"], so only built output is copied — without that,
+#     every package's src/, test/ and dist-test/ would ride along.
+#
+#   * The renderer is bundled by Vite into dist/, so react and react-dom are
+#     never resolved at runtime. They stay in dependencies because that is what
+#     they are to the build, and asar keeps the cost small.
+
+appId: dev.neuracall.desktop
+productName: NeuraCall
+copyright: Copyright © 2026 NeuraCall
+
+directories:
+  output: release
+  buildResources: buildResources
+
+# main.js loads ../dist/index.html relative to dist-electron, so both trees have
+# to be present and keep their relative layout.
+files:
+  - dist-electron/**/*
+  - dist/**/*
+  - package.json
+  # The @neuracall/* dependencies are symlinks into packages/, and
+  # electron-builder copies the whole directory it finds there — the "files"
+  # field in each package.json is an npm packing rule and does not apply. So the
+  # compiled test suites (dist-test/) and the TypeScript sources ride along
+  # unless they are excluded here. Shipping a product's own tests is bulk at
+  # best, and at worst hands anyone who opens the asar a map of the internals.
+  - "!**/node_modules/@neuracall/*/dist-test/**"
+  - "!**/node_modules/@neuracall/*/src/**"
+  - "!**/node_modules/@neuracall/*/test/**"
+  - "!**/*.map"
+  - "!**/*.ts"
+  - "!**/tsconfig*.json"
+  - "!**/*.tsbuildinfo"
+
+asar: true
+
+linux:
+  # Without this the binary is named from the package — "@neuracalldesktop",
+  # scope punctuation and all.
+  executableName: neuracall
+  icon: buildResources/icon.png
+  # Without this the running window is not associated with the .desktop entry,
+  # so the taskbar shows a generic icon instead of the app's own. It pairs with
+  # "desktopName" in package.json, which supplies the app_id / WM_CLASS.
+  syncDesktopName: true
+  # AppImage only, and deliberately: it runs anywhere without root, which suits
+  # a tool an operator drops onto a machine next to a rack of phones.
+  #
+  # `deb` is supported and builds cleanly, but a .deb carries a mandatory
+  # Homepage field and this project has no public home — its only git remote is
+  # a local bare repo. Rather than bake in a URL that 404s, or leak a local
+  # filesystem path into a distributable, the target is left out until there is
+  # a real one. To enable it: add `homepage` to package.json, then add `- deb`
+  # here and `deb: {artifactName: ...}` below — without an artifactName the
+  # package name comes from the scoped module and contains a slash.
+  target:
+    - AppImage
+  category: Utility
+  synopsis: AI voice agent for real Android phones
+  description: >-
+    NeuraCall answers real cellular and WhatsApp calls on physical Android
+    handsets driven over adb, streaming call audio to AssemblyAI and replying
+    with a synthesised voice.
+  maintainer: NeuraCall <noreply@neuracall.dev>
+  desktop:
+    entry:
+      Name: NeuraCall
+      Comment: AI voice agent for real Android phones
+      Categories: Utility;Network;
+
+appImage:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+# Never ship a .env. Configuration belongs in the app's own settings store, and
+# a packaged secret is a secret in every copy of the binary.
+extraResources: []
+
+publish: null

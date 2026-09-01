@@ -376,6 +376,48 @@ over. What a caller _perceives_ is that plus the end-of-turn silence window —
 about 1.5 s on the defaults. Lowering the window trades that latency against
 cutting off callers who pause mid-sentence.
 
+## 5f. Packaging a release build
+
+Everything above runs from a checkout. To produce something an operator can copy
+onto a machine:
+
+```bash
+npm run build                       # every workspace package, first
+npm run dist -w @neuracall/desktop  # -> apps/desktop/release/
+```
+
+That writes `NeuraCall-<version>-x86_64.AppImage` (~112 MB, most of it Electron).
+AppImage needs no root and no package manager, which is what suits a box sitting
+next to a rack of phones. Mark it executable and run it:
+
+```bash
+chmod +x NeuraCall-0.1.0-x86_64.AppImage
+./NeuraCall-0.1.0-x86_64.AppImage
+```
+
+Three things about the packaged app differ from a checkout and are worth knowing
+before you debug it:
+
+- **It does not read the repo's `.env`.** `findEnvFile()` looks in the working
+  directory, then beside the binary, then in the app's own user-data directory
+  (`~/.config/NeuraCall/.env`). That last one is the packaged answer: put the
+  key there, or set `ASSEMBLYAI_API_KEY` in the environment that launches it.
+  Everything else is configured in the Settings tab and stored per user, so a
+  release build carries no configuration and **no secret** of its own.
+- **The AppImage needs FUSE.** Without it you get _"Cannot mount AppImage,
+  please check your FUSE setup"_, which reads like a corrupt download and is
+  not. Either install `libfuse2`, or run
+  `./NeuraCall-...AppImage --appimage-extract` and launch `squashfs-root/neuracall`.
+- **`adb` and `scrcpy` are still external.** They are not bundled — the app
+  drives whatever is on `PATH`, and the Tool notice in the UI tells you when one
+  is missing.
+
+`.deb` is deliberately not built. It carries a mandatory Homepage field and this
+project has no public URL, and inventing one that 404s or embedding a local path
+into a distributable are both worse than leaving the target off.
+`apps/desktop/electron-builder.yml` says exactly what to add when there is a
+real homepage.
+
 ## 6. Production Wi-Fi
 
 A rack of phones on adb over Wi-Fi is a network deployment, and it fails in

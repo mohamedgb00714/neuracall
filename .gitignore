@@ -24,3 +24,6 @@ data/
 .DS_Store
 .idea/
 .vscode/
+
+# Packaged desktop builds (electron-builder output) — 100MB+ artifacts.
+apps/desktop/release/
