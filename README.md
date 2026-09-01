@@ -21,7 +21,7 @@ Be straight about this before you plan anything around it.
 | Detect an inbound call and tell cellular from WhatsApp                           | **Works** (adb telephony dump + foreground-app/UI heuristic)                                                                                                                                            |
 | Capture the call audio with scrcpy, resample it, feed AssemblyAI realtime        | **Works** — subject to which `--audio-source` your phone allows                                                                                                                                         |
 | Live transcript, per phone and per channel                                       | **Works** (desktop app)                                                                                                                                                                                 |
-| Record the call to a WAV + JSON sidecar as it happens                            | **Works** (library; not wired into the desktop app)                                                                                                                                                     |
+| Record the call to a WAV + JSON sidecar as it happens                            | **Works.** Autopilot records every call it answers into the app's data directory                                                                                                                        |
 | Think: LLM reply per finished caller turn, with barge-in cancellation            | **Works** (library; OpenAI-compatible / OpenRouter by default)                                                                                                                                          |
 | Speak: turn that reply into audio                                                | **Works** via the AssemblyAI Voice Agent — transcription, reply and voice over one socket on the key you already have. On the composed path, `TtsClient` still needs a provider or it stays `SilentTts` |
 | **Make the caller hear it**                                                      | **Needs a transport you set up yourself** — see below                                                                                                                                                   |
@@ -54,10 +54,15 @@ out-of-band transport:
 - **Acoustic coupling** — a speaker next to the phone's microphone. Always
   works, sounds like it, leaks room noise into the call.
 
-The code side is ready for all three: `AudioInjector` is an interface, and
-`CommandAudioInjector` already plays PCM to a named host audio sink (`pw-play`
-/ `paplay` / `aplay`), which is what a Bluetooth HFP sink or a speaker looks
-like. What is missing is the operator-side setup and the app wiring.
+The code side is ready for all three and the app side is wired: point the
+**Inject sink** setting at a host audio sink and `CommandAudioInjector` plays
+the agent's PCM into it through `pw-play` / `paplay` / `aplay` — which is
+exactly what a Bluetooth HFP sink or a speaker looks like. What is missing is
+only the operator-side setup: pairing a phone over HFP takes a confirmation tap
+on the handset and cannot be scripted. [docs/RUNBOOK.md](docs/RUNBOOK.md) §3a
+has the procedure, including the check that the adapter advertises the Handsfree
+profile rather than only A2DP — a sink that carries music has no microphone path
+and so cannot carry a call.
 
 Read **[docs/AUDIO-ABI.md](docs/AUDIO-ABI.md)** before you argue with any of
 this — it is the whole story, both directions, with the per-OEM caveats.
