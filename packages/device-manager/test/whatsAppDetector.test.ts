@@ -458,3 +458,39 @@ test("the detector reports no call on a device that merely made one earlier", as
     channel: null,
   });
 });
+
+test("the French ringing banner is recognised — it was not, and calls went unanswered", () => {
+  // Taken from the handset this was built for. WhatsApp Business shows the ring
+  // as a heads-up NOTIFICATION over the conversation, so mCurrentFocus never
+  // changes and the audio mode stays NORMAL: this dump is the only evidence a
+  // call is arriving. Every hint used to be English, so it matched nothing and
+  // five consecutive calls were recorded as missed with no error anywhere.
+  const dump = `<?xml version="1.0"?><hierarchy>
+<node text="Appel vocal entrant" clickable="false" bounds="[0,100][720,300]"/>
+<node text="REFUSER" content-desc="REFUSER" clickable="true" bounds="[64,290][296,358]"/>
+<node text="RÉPONDRE" content-desc="RÉPONDRE" clickable="true" bounds="[316,290][572,358]"/>
+</hierarchy>`;
+  assert.equal(hasIncomingCallUi(dump), true);
+});
+
+test("a ringing screen is recognised by its shape when the wording is unknown", () => {
+  // Accept and decline on screen together is what a ring looks like in any
+  // language, so an unlisted locale still gets answered.
+  const dump = `<?xml version="1.0"?><hierarchy>
+<node text="REFUSER" clickable="true" bounds="[64,290][296,358]"/>
+<node text="RÉPONDRE" clickable="true" bounds="[316,290][572,358]"/>
+</hierarchy>`;
+  assert.equal(hasIncomingCallUi(dump), true);
+});
+
+test("an idle conversation is not mistaken for a ringing call", () => {
+  // The chat screen carries voice- and video-call buttons. If those alone read
+  // as a ring, autopilot would try to answer a call that does not exist every
+  // time someone opens a chat.
+  const dump = `<?xml version="1.0"?><hierarchy>
+<node content-desc="Appel vocal" clickable="true" bounds="[560,120][620,180]"/>
+<node content-desc="Appel vidéo" clickable="true" bounds="[470,120][530,180]"/>
+<node text="Message" clickable="true" bounds="[0,1400][700,1480]"/>
+</hierarchy>`;
+  assert.equal(hasIncomingCallUi(dump), false);
+});

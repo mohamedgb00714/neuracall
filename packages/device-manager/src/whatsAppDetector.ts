@@ -1,5 +1,7 @@
 import type { CommandRunner } from "./adb.js";
 import { dumpUi } from "./uiDump.js";
+import { parseClickableNodes } from "./voipDialer.js";
+import { isAnswerNode, isDeclineNode } from "./voipAnswerer.js";
 import { parseCallState } from "./callController.js";
 import type { CallState, ChannelKind } from "./types.js";
 import { callChannelForOwner, channelForPackage } from "./callingApps.js";
@@ -50,6 +52,15 @@ const INCOMING_CALL_HINTS: RegExp[] = [
   /\bdecline\b/i,
   /\bis\s+calling\b/i,
   /\bswipe\s+up\s+to\s+answer\b/i,
+  // These were English-only, and the handset this was built for runs in French:
+  // its ringing banner reads "Appel vocal entrant" with REFUSER / RÉPONDRE, so
+  // every hint above missed and inbound calls were never reported at all.
+  /appel\s+(vocal|vid[ée]o)\s+entrant/i,
+  /llamada\s+entrante/i,
+  /chiamata\s+in\s+arrivo/i,
+  /eingehender\s+anruf/i,
+  /chamada\s+recebida/i,
+  /مكالمة\s+واردة/,
 ];
 
 /**
@@ -345,5 +356,17 @@ export function isVoipCallActive(dump: string): boolean {
 
 /** True when a UIAutomator dump looks like an incoming WhatsApp call screen. */
 export function hasIncomingCallUi(dump: string): boolean {
-  return INCOMING_CALL_HINTS.some((re) => re.test(dump));
+  if (INCOMING_CALL_HINTS.some((re) => re.test(dump))) return true;
+
+  // Fall back to the shape of the screen rather than its wording: a ringing
+  // call is the one moment an accept control and a decline control are on
+  // screen together. A conversation has a call button but nothing to decline,
+  // and a call in progress has hang-up but nothing to accept.
+  //
+  // This reuses the answerer's predicates on purpose. They already cover seven
+  // languages and are the same readings that decide where to tap, so detection
+  // and answering cannot drift apart into a state where one recognises a screen
+  // the other does not.
+  const nodes = parseClickableNodes(dump);
+  return nodes.some(isAnswerNode) && nodes.some(isDeclineNode);
 }
