@@ -56,6 +56,13 @@ import type { AgentReply, AgentTurnContext, CallAgent, CallRecord } from "./type
 /** How long to wait for the agent's reply text before giving up on it. */
 const DEFAULT_REPLY_TIMEOUT_MS = 20_000;
 
+/**
+ * How long to wait for the greeting. Much shorter than a reply, because the
+ * orchestrator awaits it during call setup and an agent with no greeting
+ * configured never produces one — see `firstReply`.
+ */
+const DEFAULT_GREETING_TIMEOUT_MS = 2_000;
+
 export interface VoiceAgentBridgeOptions {
   /** AssemblyAI key. Never logged, never sent anywhere but the socket. */
   apiKey: string;
@@ -84,6 +91,12 @@ export interface VoiceAgentBridgeOptions {
   injectorFor?: (deviceId: string, channelId: ChannelKind) => AudioInjector | undefined;
   /** How long `onFinalTurn` waits for reply text. Default 20000 ms. */
   replyTimeoutMs?: number;
+  /**
+   * How long `onAnswered` waits for a greeting. Default 2000 ms, deliberately
+   * short: the orchestrator blocks call setup on it and an agent without a
+   * greeting never sends one.
+   */
+  greetingTimeoutMs?: number;
   /** Injectable so tests neither open sockets nor wait. */
   createSession?: (opts: VoiceAgentOptions) => VoiceAgentSession;
   now?: () => number;
@@ -124,6 +137,21 @@ class VoiceAgentCall extends EventEmitter implements SttStream {
   private replyText = "";
   /** Counts finalized caller turns; see the `userTranscript` handler. */
   private turnOrder = -1;
+  /**
+   * The greeting gets a channel of its own rather than sharing the reply queue.
+   *
+   * Sharing it is subtly wrong and the symptom is remote from the cause: while
+   * `onAnswered` is still waiting, the first *turn's* reply arrives and settles
+   * that waiter instead, so the greeting slot swallows the answer to turn one,
+   * every later reply is off by one, and the final turn waits out the full
+   * reply timeout with nothing coming. A reply that completes before any caller
+   * turn has been finalized is the greeting; one that completes after is an
+   * answer. Nothing else can tell them apart.
+   */
+  private greeting: CompletedReply | null = null;
+  private greetingWaiter: ((reply: CompletedReply | null) => void) | null = null;
+  /** True once the caller has finished a turn, so no greeting can still come. */
+  private sawCallerTurn = false;
   private closed = false;
 
   constructor(
@@ -152,7 +180,14 @@ class VoiceAgentCall extends EventEmitter implements SttStream {
       // field. The orchestrator stores it on every transcript entry and uses it
       // to dedupe, so it needs to increase once per finalized caller turn;
       // counting them here is the only source of that number.
-      if (e.final) this.turnOrder += 1;
+      if (e.final) {
+        this.turnOrder += 1;
+        // The caller has spoken, so a greeting is no longer possible. Release
+        // anyone waiting for one now rather than making call setup sit out the
+        // rest of its timeout.
+        this.sawCallerTurn = true;
+        this.releaseGreeting(null);
+      }
       // Partials are forwarded too: the orchestrator ignores them, but a UI
       // subscribing to the same emitter wants them.
       this.emit("turn", {
@@ -208,6 +243,7 @@ class VoiceAgentCall extends EventEmitter implements SttStream {
     this.session.on("close", () => {
       this.closed = true;
       // Anyone still waiting for a reply will never get one.
+      this.releaseGreeting(null);
       for (const resolve of this.waiting.splice(0)) resolve(null);
       this.emit("close");
     });
@@ -215,9 +251,48 @@ class VoiceAgentCall extends EventEmitter implements SttStream {
 
   /** Hand a finished reply to a waiter, or park it until one arrives. */
   private settleReply(reply: CompletedReply): void {
+    // Before the caller has said anything, the only thing the agent can be
+    // saying is its greeting.
+    if (!this.sawCallerTurn) {
+      if (this.greetingWaiter) this.releaseGreeting(reply);
+      else this.greeting = reply;
+      return;
+    }
     const waiter = this.waiting.shift();
     if (waiter) waiter(reply);
     else this.ready.push(reply);
+  }
+
+  /** Settle a pending greeting wait, if there is one. */
+  private releaseGreeting(reply: CompletedReply | null): void {
+    const waiter = this.greetingWaiter;
+    this.greetingWaiter = null;
+    waiter?.(reply);
+  }
+
+  /**
+   * The greeting, if the agent has one. Waits only briefly: the orchestrator
+   * blocks call setup on this, and an agent configured without a greeting never
+   * sends one.
+   */
+  takeGreeting(timeoutMs: number): Promise<CompletedReply | null> {
+    const ready = this.greeting;
+    if (ready) {
+      this.greeting = null;
+      return Promise.resolve(ready);
+    }
+    if (this.closed || this.sawCallerTurn) return Promise.resolve(null);
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.greetingWaiter = null;
+        resolve(null);
+      }, timeoutMs);
+      this.greetingWaiter = (reply) => {
+        clearTimeout(timer);
+        resolve(reply);
+      };
+    });
   }
 
   /**
@@ -226,7 +301,7 @@ class VoiceAgentCall extends EventEmitter implements SttStream {
    * common case: the audio and the text both arrive while the orchestrator is
    * still persisting the caller's turn.
    */
-  takeReply(): Promise<CompletedReply | null> {
+  takeReply(timeoutMs = this.replyTimeoutMs): Promise<CompletedReply | null> {
     const queued = this.ready.shift();
     if (queued) return Promise.resolve(queued);
     if (this.closed) return Promise.resolve(null);
@@ -236,7 +311,7 @@ class VoiceAgentCall extends EventEmitter implements SttStream {
         const i = this.waiting.indexOf(settle);
         if (i >= 0) this.waiting.splice(i, 1);
         resolve(null);
-      }, this.replyTimeoutMs);
+      }, timeoutMs);
       const settle = (reply: CompletedReply | null): void => {
         clearTimeout(timer);
         resolve(reply);
@@ -270,6 +345,7 @@ class VoiceAgentCall extends EventEmitter implements SttStream {
    */
   releaseTransport(): void {
     this.closed = true;
+    this.releaseGreeting(null);
     for (const resolve of this.waiting.splice(0)) resolve(null);
     this.injector?.end?.();
   }
@@ -397,11 +473,29 @@ export class VoiceAgentBridge implements SttSessionManager {
    * The greeting. The Voice Agent speaks it on its own as soon as the session
    * is ready, so there is nothing to send — only its text to collect for the
    * transcript.
+   *
+   * It waits on a much shorter deadline than a turn does, because an agent
+   * configured *without* a greeting produces nothing here and the orchestrator
+   * `await`s this call during call setup — the hang-up watch does not even
+   * start until it returns. On the full reply timeout that is a 20-second stall
+   * at the head of every call, which an e2e run caught as three tests that
+   * passed and took exactly 20 seconds each. A greeting either arrives right
+   * after `session.ready` or does not exist.
    */
   private async firstReply(
     ctx: Omit<AgentTurnContext, "transcript" | "turnOrder">,
   ): Promise<AgentReply | null> {
-    return this.replyFrom(ctx);
+    const call = this.callFor(ctx);
+    if (!call) return null;
+    // With an inline config we can see there is no greeting, so there is no
+    // reason to hold up call setup waiting for one. A stored agent keeps its
+    // configuration server-side and cannot be asked, so that case still waits.
+    if (this.opts.session && this.opts.session.greeting === undefined) return null;
+    const reply = await call.takeGreeting(
+      this.opts.greetingTimeoutMs ?? DEFAULT_GREETING_TIMEOUT_MS,
+    );
+    if (!reply || reply.text === "") return null;
+    return { text: reply.text };
   }
 
   private async nextReply(ctx: AgentTurnContext): Promise<AgentReply | null> {
@@ -413,14 +507,13 @@ export class VoiceAgentBridge implements SttSessionManager {
    * here would make the orchestrator buffer the whole reply before the caller
    * heard any of it. See the file comment.
    */
-  private async replyFrom(ctx: {
-    callId: string;
-    deviceId: string;
-    channelId: string;
-  }): Promise<AgentReply | null> {
+  private async replyFrom(
+    ctx: { callId: string; deviceId: string; channelId: string },
+    timeoutMs?: number,
+  ): Promise<AgentReply | null> {
     const call = this.callFor(ctx);
     if (!call) return null;
-    const reply = await call.takeReply();
+    const reply = await call.takeReply(timeoutMs);
     if (!reply || reply.text === "") return null;
     return { text: reply.text };
   }

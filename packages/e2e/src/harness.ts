@@ -29,12 +29,15 @@ import type { LlmClient, LlmRequest } from "@neuracall/agent";
 import {
   MemoryCallRecordStore,
   Orchestrator,
+  VoiceAgentBridge,
   type AudioCapture,
   type CapturePcmSink,
   type CaptureHandle,
   type CallRecord,
 } from "@neuracall/orchestrator";
+import type { AudioInjector } from "@neuracall/audio-pipeline";
 import { FakeA2IFleet } from "./fakeA2I.js";
+import { FakeVoiceAgentFleet } from "./fakeVoiceAgent.js";
 import { FakeAdb, FakePhone } from "./fakePhone.js";
 
 /** A config with no real key — the WebSocket factory is injected anyway. */
@@ -106,6 +109,33 @@ export class ScriptedLlm implements LlmClient {
   }
 }
 
+/**
+ * Stands in for the Bluetooth sink. On the Voice Agent path the agent's speech
+ * never passes through `LocalOutStream` — the bridge writes it straight here —
+ * so this is the only place a test can see that the caller would have heard
+ * anything at all.
+ */
+export class CollectingInjector implements AudioInjector {
+  readonly sampleRate = 16000;
+  readonly channels = 1 as const;
+  readonly writes: Uint8Array[] = [];
+  cancels = 0;
+  ended = 0;
+
+  get bytes(): number {
+    return this.writes.reduce((n, c) => n + c.length, 0);
+  }
+  write(pcm: Uint8Array): void {
+    this.writes.push(pcm);
+  }
+  cancel(): void {
+    this.cancels += 1;
+  }
+  end(): void {
+    this.ended += 1;
+  }
+}
+
 export interface HarnessOptions {
   /** Phones in the pool. Default one wireless phone. */
   phones?: FakePhone[];
@@ -119,6 +149,13 @@ export interface HarnessOptions {
   hangupPollMs?: number;
   /** Cap on concurrent realtime sessions. */
   maxConcurrent?: number;
+  /**
+   * Run the call through the AssemblyAI Voice Agent instead of the composed
+   * STT + LLM + TTS pipeline. The replies come from the fake service rather
+   * than from `replies`, because on this path the service produces both the
+   * text and the speech.
+   */
+  voiceAgent?: { replies?: string[]; greeting?: string };
 }
 
 export const DEFAULT_ENDPOINT = "192.168.1.44:5555";
@@ -133,6 +170,10 @@ export interface Harness {
   capture: ReplayCapture;
   llm: ScriptedLlm;
   agent: LlmCallAgent;
+  /** Set only when `voiceAgent` was requested. */
+  voiceAgent: FakeVoiceAgentFleet | null;
+  /** Everything the agent's voice was written into, on the Voice Agent path. */
+  injected: CollectingInjector;
   store: MemoryCallRecordStore;
   orchestrator: Orchestrator;
   /** Every state the orchestrator announced, in order. */
@@ -169,15 +210,32 @@ export function buildHarness(opts: HarnessOptions = {}): Harness {
   });
   const store = new MemoryCallRecordStore();
 
+  const injected = new CollectingInjector();
+  const voiceAgentFleet = opts.voiceAgent
+    ? new FakeVoiceAgentFleet({
+        ...(opts.voiceAgent.replies ? { replies: opts.voiceAgent.replies } : {}),
+        ...(opts.voiceAgent.greeting !== undefined ? { greeting: opts.voiceAgent.greeting } : {}),
+      })
+    : null;
+  const bridge = voiceAgentFleet
+    ? new VoiceAgentBridge({
+        apiKey: "test-not-a-real-key",
+        agentId: "11111111-2222-3333-4444-555555555555",
+        injectorFor: () => injected,
+        createSession: voiceAgentFleet.create as never,
+      })
+    : null;
+
   const states: string[] = [];
   const errors: Error[] = [];
   const orchestrator = new Orchestrator({
     devices,
     controllerFor: (deviceId) => new AndroidCallController(adb, deviceId),
     detector,
-    sessions,
+    // One socket doing STT, the model and the voice, or the composed trio.
+    sessions: bridge ?? sessions,
     capture,
-    agent,
+    agent: bridge ? bridge.agent : agent,
     store,
     hangupPollMs: opts.hangupPollMs ?? 0,
     ...(opts.recordingsDir !== undefined ? { recordingsDir: opts.recordingsDir } : {}),
@@ -206,6 +264,8 @@ export function buildHarness(opts: HarnessOptions = {}): Harness {
     capture,
     llm,
     agent,
+    voiceAgent: voiceAgentFleet,
+    injected,
     store,
     orchestrator,
     states,

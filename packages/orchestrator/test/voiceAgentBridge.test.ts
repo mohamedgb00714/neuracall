@@ -130,6 +130,9 @@ test("onFinalTurn returns the reply text and never its audio", async () => {
   const { bridge, session } = makeBridge(injector);
   await bridge.open(KEY, PARAMS);
 
+  // The caller speaks first: a reply that arrives before any caller turn is the
+  // greeting, not an answer, and the bridge tells them apart on exactly this.
+  session().emit("userTranscript", { text: "hello", final: true });
   session().emit("replyStarted", { replyId: "r1", itemId: null });
   session().emit("replyAudio", pcm(240));
   session().emit("agentTranscript", { text: "Certainly.", final: true, replyId: "r1" });
@@ -159,6 +162,7 @@ test("a reply that finishes before it is asked for is not lost", async () => {
   const { bridge, session } = makeBridge();
   await bridge.open(KEY, PARAMS);
 
+  session().emit("userTranscript", { text: "hi", final: true });
   session().emit("replyStarted", { replyId: "r1", itemId: null });
   session().emit("agentTranscript", { text: "Queued.", final: true, replyId: "r1" });
   session().emit("replyDone", { replyId: "r1", status: "completed" });
@@ -251,6 +255,7 @@ test("a missing injector degrades the call instead of failing it", async () => {
   const { bridge, session } = makeBridge();
   await bridge.open(KEY, PARAMS);
 
+  session().emit("userTranscript", { text: "hi", final: true });
   session().emit("replyStarted", { replyId: "r1", itemId: null });
   session().emit("replyAudio", pcm(240));
   session().emit("agentTranscript", { text: "Still here.", final: true, replyId: "r1" });
@@ -295,4 +300,72 @@ test("a session that fails to connect releases its transport", async () => {
   await assert.rejects(bridge.open(KEY, PARAMS), /connect refused/);
   assert.equal(made.destroyed, true, "the socket must be released");
   assert.equal(injector.ended, 1, "the transport must be released");
+});
+
+test("a greeting waiter does not swallow the first turn's answer", async () => {
+  // The bug this guards was invisible locally and obvious in an e2e run: while
+  // onAnswered waited for a greeting the agent never had, the answer to turn
+  // one settled that wait instead. Every later reply was then off by one and
+  // the last turn sat out the full reply timeout.
+  const { bridge, session } = makeBridge();
+  await bridge.open(KEY, PARAMS);
+
+  const ctx = {
+    callId: "c1",
+    deviceId: KEY.deviceId,
+    channelId: KEY.channelId as never,
+    history: [],
+  };
+  const greeting = bridge.agent.onAnswered!(ctx);
+
+  // No greeting is coming; the caller just starts talking.
+  session().emit("userTranscript", { text: "hello", final: true });
+  session().emit("replyStarted", { replyId: "r1", itemId: null });
+  session().emit("agentTranscript", { text: "The answer.", final: true, replyId: "r1" });
+  session().emit("replyDone", { replyId: "r1", status: "completed" });
+
+  assert.equal(await greeting, null, "there was no greeting to report");
+  const answer = await bridge.agent.onFinalTurn({ ...ctx, transcript: "hello", turnOrder: 0 });
+  assert.equal(answer?.text, "The answer.", "the turn's answer must not be lost to the greeting");
+});
+
+test("a greeting spoken before the caller talks is reported as the greeting", async () => {
+  const { bridge, session } = makeBridge();
+  await bridge.open(KEY, PARAMS);
+
+  session().emit("replyStarted", { replyId: "g", itemId: null });
+  session().emit("agentTranscript", { text: "Hello, NeuraCall.", final: true, replyId: "g" });
+  session().emit("replyDone", { replyId: "g", status: "completed" });
+
+  const greeting = await bridge.agent.onAnswered!({
+    callId: "c1",
+    deviceId: KEY.deviceId,
+    channelId: KEY.channelId as never,
+    history: [],
+  });
+  assert.equal(greeting?.text, "Hello, NeuraCall.");
+});
+
+test("an inline agent with no greeting does not delay call setup", async () => {
+  // The orchestrator awaits onAnswered before it starts the hang-up watch, so
+  // any wait here is dead time at the head of every call. When the config is
+  // inline we can see no greeting was asked for and skip it entirely.
+  const bridge = new VoiceAgentBridge({
+    apiKey: "k",
+    session: { system_prompt: "Be brief." },
+    createSession: () => new FakeSession() as never,
+    greetingTimeoutMs: 5000,
+  });
+  await bridge.open(KEY, PARAMS);
+
+  const started = Date.now();
+  const greeting = await bridge.agent.onAnswered!({
+    callId: "c1",
+    deviceId: KEY.deviceId,
+    channelId: KEY.channelId as never,
+    history: [],
+  });
+
+  assert.equal(greeting, null);
+  assert.ok(Date.now() - started < 100, "it must not wait out the greeting timeout");
 });
