@@ -27,6 +27,7 @@
  */
 
 import type { CommandRunner } from "./adb.js";
+import { dumpUi as dumpUiSerialised } from "./uiDump.js";
 import type { ChannelKind } from "./types.js";
 import { ScreenController, type ScreenState } from "./screen.js";
 import { clickableLabels, nodeCentre, parseClickableNodes, type UiNode } from "./voipDialer.js";
@@ -366,22 +367,8 @@ export class VoipAnswerer {
   }
 
   private async dumpUi(endpoint: string): Promise<string> {
-    try {
-      // A distinct path from the dialler's, so a dial and an answer racing on
-      // one handset cannot read each other's half-written dump.
-      await this.runner.runForDevice(endpoint, [
-        "shell",
-        "uiautomator",
-        "dump",
-        "/sdcard/neuracall_answer.xml",
-      ]);
-      return await this.runner.runForDevice(endpoint, [
-        "shell",
-        "cat",
-        "/sdcard/neuracall_answer.xml",
-      ]);
-    } catch {
-      return "";
-    }
+    // Through the serialiser: the detector polls this same tool every couple of
+    // seconds, and two concurrent dumps kill each other with a bare SIGKILL.
+    return dumpUiSerialised(this.runner, endpoint, { path: "/sdcard/neuracall_answer.xml" });
   }
 }

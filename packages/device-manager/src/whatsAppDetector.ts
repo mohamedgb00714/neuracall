@@ -1,4 +1,5 @@
 import type { CommandRunner } from "./adb.js";
+import { dumpUi } from "./uiDump.js";
 import { parseCallState } from "./callController.js";
 import type { CallState, ChannelKind } from "./types.js";
 import { callChannelForOwner, channelForPackage } from "./callingApps.js";
@@ -153,21 +154,9 @@ export class AdbCallChannelDetector implements CallChannelDetector {
   }
 
   private async uiDump(endpoint: string): Promise<string> {
-    try {
-      await this.runner.runForDevice(endpoint, [
-        "shell",
-        "uiautomator",
-        "dump",
-        "/sdcard/neuracall_window.xml",
-      ]);
-      return await this.runner.runForDevice(endpoint, [
-        "shell",
-        "cat",
-        "/sdcard/neuracall_window.xml",
-      ]);
-    } catch {
-      return "";
-    }
+    // Serialised: the answerer dumps while the phone is ringing, which is
+    // exactly when this poll is running. Concurrent dumps kill each other.
+    return dumpUi(this.runner, endpoint, { path: "/sdcard/neuracall_window.xml" });
   }
 }
 
