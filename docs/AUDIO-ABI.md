@@ -11,10 +11,10 @@ A call has two audio paths and they are not symmetric. NeuraCall models them as
 two labelled streams on a `CallAudioSession`
 (`@neuracall/audio-pipeline`, `src/dualStream.ts`):
 
-| Label | Direction | Carries | How it moves |
-| --- | --- | --- | --- |
-| `remoteIn` | far end → us | what the caller says | **captured** off the phone with scrcpy, then resampled + VAD-gated and fed to AssemblyAI and the call recorder |
-| `localOut` | us → far end | the agent's TTS voice | **injected** into the call through an `AudioInjector` |
+| Label      | Direction    | Carries               | How it moves                                                                                                   |
+| ---------- | ------------ | --------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `remoteIn` | far end → us | what the caller says  | **captured** off the phone with scrcpy, then resampled + VAD-gated and fed to AssemblyAI and the call recorder |
+| `localOut` | us → far end | the agent's TTS voice | **injected** into the call through an `AudioInjector`                                                          |
 
 Every chunk leaving `remoteIn` is a `CallAudioChunk` tagged with
 `direction`, `deviceId`, `callId` and `channelId`, so one sink can serve
@@ -87,14 +87,14 @@ With `voice-call-downlink` the problem does not arise, which is why it is first.
 Injection is the direction Android actively resists: there is no supported way
 for an adb-shell process to write into the call uplink. **scrcpy cannot do
 this** — it is a capture and control tool, and no `--audio-source` value plays
-audio *into* the phone. So `localOut` is deliberately behind an interface:
+audio _into_ the phone. So `localOut` is deliberately behind an interface:
 
 ```ts
 interface AudioInjector {
   readonly sampleRate: number;
   readonly channels: 1 | 2;
   write(pcm: Uint8Array): void;
-  cancel?(): void;   // barge-in: drop what is queued
+  cancel?(): void; // barge-in: drop what is queued
   end?(): void;
 }
 ```
@@ -104,7 +104,7 @@ count before calling `write`, so injectors never resample. Known transports,
 in rough order of fidelity:
 
 - **Bluetooth HFP** — pair the host to the phone as a hands-free device; the
-  phone treats the host as its headset, so the host's output *is* the call
+  phone treats the host as its headset, so the host's output _is_ the call
   uplink. Best quality, needs a working BlueZ/HFP stack.
 - **On-device helper app** — an APK holding `MODIFY_AUDIO_SETTINGS` that plays
   into the call. Reliable but requires installing software on every phone.

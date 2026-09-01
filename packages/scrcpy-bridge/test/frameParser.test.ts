@@ -1,9 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  ScrcpyFrameReader,
-  SCRCPY_FRAME_HEADER_SIZE,
-} from "../src/frameParser.js";
+import { ScrcpyFrameReader, SCRCPY_FRAME_HEADER_SIZE } from "../src/frameParser.js";
 
 /** Build a single scrcpy audio frame: 12-byte header + payload. */
 function buildFrame(payload: number[], pts = 0, config = false): Buffer {

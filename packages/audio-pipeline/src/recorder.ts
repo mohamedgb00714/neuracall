@@ -201,7 +201,11 @@ export interface WavHeaderInfo {
  */
 export function parseWavHeader(bytes: Uint8Array): WavHeaderInfo {
   const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (b.length < 12 || b.toString("ascii", 0, 4) !== "RIFF" || b.toString("ascii", 8, 12) !== "WAVE") {
+  if (
+    b.length < 12 ||
+    b.toString("ascii", 0, 4) !== "RIFF" ||
+    b.toString("ascii", 8, 12) !== "WAVE"
+  ) {
     throw new Error("not a RIFF/WAVE file");
   }
   const riffBytes = b.readUInt32LE(4);
@@ -281,7 +285,9 @@ export class CallRecorder {
     const sampleRate = opts.sampleRate ?? DEFAULT_SAMPLE_RATE;
     const maxSeconds = opts.maxSeconds ?? DEFAULT_MAX_SECONDS;
     if (!Number.isInteger(sampleRate) || sampleRate <= 0) {
-      throw new Error(`CallRecorder: sampleRate must be a positive integer, got ${String(opts.sampleRate)}`);
+      throw new Error(
+        `CallRecorder: sampleRate must be a positive integer, got ${String(opts.sampleRate)}`,
+      );
     }
     if (!Number.isFinite(maxSeconds) || maxSeconds <= 0) {
       throw new Error(`CallRecorder: maxSeconds must be > 0, got ${String(opts.maxSeconds)}`);
@@ -298,7 +304,10 @@ export class CallRecorder {
     this.channelId = opts.channelId;
     this.sampleRate = sampleRate;
     this.maxSeconds = maxSeconds;
-    this.maxBytes = Math.min(Math.floor(maxSeconds * sampleRate) * BYTES_PER_SAMPLE, WAV_MAX_DATA_BYTES);
+    this.maxBytes = Math.min(
+      Math.floor(maxSeconds * sampleRate) * BYTES_PER_SAMPLE,
+      WAV_MAX_DATA_BYTES,
+    );
     this.flushBytes = Math.max(BYTES_PER_SAMPLE, opts.flushBytes ?? DEFAULT_FLUSH_BYTES);
     this.flushIntervalMs = Math.max(0, opts.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS);
     this.syncOnFlush = opts.syncOnFlush ?? false;
@@ -402,7 +411,10 @@ export class CallRecorder {
       return complete;
     }
 
-    if (this.pendingBytes >= this.flushBytes || this.now() - this.lastFlushAt >= this.flushIntervalMs) {
+    if (
+      this.pendingBytes >= this.flushBytes ||
+      this.now() - this.lastFlushAt >= this.flushIntervalMs
+    ) {
       this.flush();
     }
     return complete;
@@ -626,7 +638,11 @@ export class TeeWritable extends Writable {
     return true;
   }
 
-  override _write(chunk: unknown, _encoding: BufferEncoding, cb: (error?: Error | null) => void): void {
+  override _write(
+    chunk: unknown,
+    _encoding: BufferEncoding,
+    cb: (error?: Error | null) => void,
+  ): void {
     for (const target of [...this.targetList]) {
       if (target.destroyed || target.writableEnded) continue;
       try {

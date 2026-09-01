@@ -160,13 +160,7 @@ const FALSE_SPELLINGS = ["0", "false", "no", "off"];
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const MODES: readonly RealtimeMode[] = ["min_latency", "balanced", "max_accuracy"];
-const TTS_PROVIDERS: readonly TtsProvider[] = [
-  "auto",
-  "openai",
-  "elevenlabs",
-  "command",
-  "silent",
-];
+const TTS_PROVIDERS: readonly TtsProvider[] = ["auto", "openai", "elevenlabs", "command", "silent"];
 
 /**
  * scrcpy's `--audio-source` values. Typed as the bridge's union so a rename
@@ -384,7 +378,12 @@ export function parseSettingsPatch(raw: unknown): SettingsPatch {
   if (autopilot) {
     const section: SettingsPatch["autopilot"] = {};
     if ("maxCallMs" in autopilot) {
-      section.maxCallMs = integer(autopilot["maxCallMs"], "autopilot.maxCallMs", 1000, 6 * 3600_000);
+      section.maxCallMs = integer(
+        autopilot["maxCallMs"],
+        "autopilot.maxCallMs",
+        1000,
+        6 * 3600_000,
+      );
     }
     if ("stallMs" in autopilot) {
       section.stallMs = integer(autopilot["stallMs"], "autopilot.stallMs", 1000, 3600_000);
@@ -733,20 +732,30 @@ async function probeAssemblyAI(config: AppConfig, opts: ProbeOptions): Promise<P
     // a deadline; a diagnostic must not hang the settings dialog.
     const res = await request(url, { authorization: config.assemblyai.apiKey }, opts);
     if (!res.ok) {
-      return { ok: false, detail: `${config.assemblyai.realtimeHost} rejected the key ${status(res)}` };
+      return {
+        ok: false,
+        detail: `${config.assemblyai.realtimeHost} rejected the key ${status(res)}`,
+      };
     }
     const body = (await res.json()) as { token?: string };
     return body.token
-      ? { ok: true, detail: `key accepted by ${config.assemblyai.realtimeHost} (region ${config.assemblyai.region})` }
+      ? {
+          ok: true,
+          detail: `key accepted by ${config.assemblyai.realtimeHost} (region ${config.assemblyai.region})`,
+        }
       : { ok: false, detail: `${config.assemblyai.realtimeHost} returned no token` };
   } catch (err) {
-    return { ok: false, detail: `could not reach ${config.assemblyai.realtimeHost}: ${describe(err)}` };
+    return {
+      ok: false,
+      detail: `could not reach ${config.assemblyai.realtimeHost}: ${describe(err)}`,
+    };
   }
 }
 
 async function probeLlm(settings: NeuraCallSettings, opts: ProbeOptions): Promise<ProbeResult> {
   const { apiKey, model, baseUrl } = settings.llm;
-  if (!apiKey) return { ok: false, detail: "no API key stored — the agent will listen but not reply" };
+  if (!apiKey)
+    return { ok: false, detail: "no API key stored — the agent will listen but not reply" };
   if (!model) return { ok: false, detail: "no model set — the agent will listen but not reply" };
   const base = trimSlashes(baseUrl || DEFAULT_LLM_BASE_URL);
   return reachable(`${base}/models`, { authorization: `Bearer ${apiKey}` }, base, opts);
@@ -771,7 +780,9 @@ async function probeTts(
   );
   // ElevenLabs authenticates with its own header, not Bearer.
   const headers: Record<string, string> =
-    selection.provider === "elevenlabs" ? { "xi-api-key": key } : { authorization: `Bearer ${key}` };
+    selection.provider === "elevenlabs"
+      ? { "xi-api-key": key }
+      : { authorization: `Bearer ${key}` };
   const result = await reachable(`${base}/models`, headers, base, opts);
   return { ok: result.ok, detail: `${selection.description} — ${result.detail}` };
 }
@@ -844,7 +855,8 @@ function optionalObject(
 }
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], path: string): T {
-  if (typeof value === "string" && (allowed as readonly string[]).includes(value)) return value as T;
+  if (typeof value === "string" && (allowed as readonly string[]).includes(value))
+    return value as T;
   throw new Error(`${path} must be one of: ${allowed.join(", ")} (got ${JSON.stringify(value)}).`);
 }
 
@@ -955,7 +967,9 @@ function keyterms(value: unknown): string[] {
     terms.push(term);
   }
   if (terms.length > MAX_KEYTERMS) {
-    throw new Error(`assemblyai.keyterms accepts at most ${MAX_KEYTERMS} terms (got ${terms.length}).`);
+    throw new Error(
+      `assemblyai.keyterms accepts at most ${MAX_KEYTERMS} terms (got ${terms.length}).`,
+    );
   }
   return terms;
 }
@@ -985,7 +999,10 @@ function clean(value: string | undefined): string | undefined {
 function splitList(value: string | undefined): string[] | undefined {
   const raw = clean(value);
   if (raw === undefined) return undefined;
-  return raw.split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
+  return raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
 }
 
 function numeric(value: string | undefined): number | undefined {

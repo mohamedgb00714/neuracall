@@ -42,9 +42,7 @@ test("routes a partial Turn with final=false and a final Turn with final=true", 
     turn_is_formatted: false,
     transcript: "the quick",
     end_of_turn_confidence: 0.1,
-    words: [
-      { text: "the", start: 0, end: 200, confidence: 0.9, word_is_final: false },
-    ],
+    words: [{ text: "the", start: 0, end: 200, confidence: 0.9, word_is_final: false }],
     utterance: "",
   });
 
@@ -55,9 +53,7 @@ test("routes a partial Turn with final=false and a final Turn with final=true", 
     turn_is_formatted: true,
     transcript: "the quick brown fox",
     end_of_turn_confidence: 0.98,
-    words: [
-      { text: "the", start: 0, end: 200, confidence: 0.99, word_is_final: true },
-    ],
+    words: [{ text: "the", start: 0, end: 200, confidence: 0.99, word_is_final: true }],
     utterance: "the quick brown fox",
     speaker_label: "A",
   });

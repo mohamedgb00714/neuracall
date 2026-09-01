@@ -85,7 +85,8 @@ export class MockA2I {
 
   /** Client → server direction. */
   onClientMessage(data: unknown): void {
-    const text = typeof data === "string" ? data : data instanceof Buffer ? data.toString("utf8") : "";
+    const text =
+      typeof data === "string" ? data : data instanceof Buffer ? data.toString("utf8") : "";
     if (typeof data === "string" || (data instanceof Buffer && isJsonText(text))) {
       const raw: string = typeof data === "string" ? data : text;
       this.sent.push(raw);
@@ -184,10 +185,7 @@ export class MockSocket extends EventEmitter {
   }
 
   close(code?: number, reason?: string): void {
-    if (
-      this.readyState === WS_STATE.CLOSED ||
-      this.readyState === WS_STATE.CLOSING
-    ) {
+    if (this.readyState === WS_STATE.CLOSED || this.readyState === WS_STATE.CLOSING) {
       return;
     }
     this.readyState = WS_STATE.CLOSING;

@@ -43,7 +43,7 @@ test("normalize downmixes a stereo buffer to mono 16k", () => {
   const frames = 4;
   const buf = Buffer.alloc(frames * 2 * 2);
   for (let f = 0; f < frames; f++) {
-    buf.writeInt16LE(32767, (f * 2) * 2); // left = max
+    buf.writeInt16LE(32767, f * 2 * 2); // left = max
     buf.writeInt16LE(0, (f * 2 + 1) * 2); // right = 0
   }
   const mono = normalize(buf, 2, 16000, 16000);

@@ -222,7 +222,11 @@ test("context is per device and channel, so calls never bleed into each other", 
   const agent = new LlmCallAgent({ llm: new StaticLlmClient("ok") });
 
   await agent.onFinalTurn({ ...turn("cellular secret"), deviceId: "PHONE-A" });
-  await agent.onFinalTurn({ ...turn("whatsapp secret"), deviceId: "PHONE-A", channelId: "whatsapp" });
+  await agent.onFinalTurn({
+    ...turn("whatsapp secret"),
+    deviceId: "PHONE-A",
+    channelId: "whatsapp",
+  });
   await agent.onFinalTurn({ ...turn("other phone"), deviceId: "PHONE-B" });
 
   assert.equal(agent.conversations.size, 3);

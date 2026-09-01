@@ -271,17 +271,25 @@ function harness(
   orchestrator.on("state", (_id: string, state: string) => states.push(state));
   orchestrator.on("error", (err: Error) => errors.push(err));
 
-  return { orchestrator, devices, controller, detector, stt, capture, agent, store, states, errors };
+  return {
+    orchestrator,
+    devices,
+    controller,
+    detector,
+    stt,
+    capture,
+    agent,
+    store,
+    states,
+    errors,
+  };
 }
 
 // --------------------------------------------------------------- tests
 
 test("a full mocked call runs through every state and closes the A2I session", async () => {
   const h = harness({
-    replies: [
-      { text: "Sure, one moment." },
-      { text: "Goodbye.", hangUp: true },
-    ],
+    replies: [{ text: "Sure, one moment." }, { text: "Goodbye.", hangUp: true }],
   });
 
   const call = h.orchestrator.handleIncomingCall(DEVICE, "cellular");
@@ -328,7 +336,11 @@ test("a full mocked call runs through every state and closes the A2I session", a
   assert.ok(record.startedAt > 0);
   assert.ok(record.answeredAt !== null && record.answeredAt >= record.startedAt);
   assert.ok(record.endedAt !== null && record.endedAt >= record.answeredAt);
-  assert.equal(h.errors.length, 0, `unexpected errors: ${h.errors.map((e) => e.message).join("; ")}`);
+  assert.equal(
+    h.errors.length,
+    0,
+    `unexpected errors: ${h.errors.map((e) => e.message).join("; ")}`,
+  );
 });
 
 test("the call record is persisted as the call progresses, not only at the end", async () => {

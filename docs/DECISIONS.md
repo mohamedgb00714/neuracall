@@ -20,10 +20,10 @@ Sources checked:
 
 **They are different parameters on different APIs, and both are correct.**
 
-| API | Parameter | Type | Value we use |
-| --- | --- | --- | --- |
-| Realtime (v3 streaming WebSocket) | `speech_model` | **singular string** | `universal-3-5-pro` |
-| Pre-recorded (`POST /v2/transcript`) | `speech_models` | **plural array** | `["universal-3-5-pro", "universal-2"]` |
+| API                                  | Parameter       | Type                | Value we use                           |
+| ------------------------------------ | --------------- | ------------------- | -------------------------------------- |
+| Realtime (v3 streaming WebSocket)    | `speech_model`  | **singular string** | `universal-3-5-pro`                    |
+| Pre-recorded (`POST /v2/transcript`) | `speech_models` | **plural array**    | `["universal-3-5-pro", "universal-2"]` |
 
 Getting this backwards fails in the least helpful way possible: the realtime
 socket accepts the connection and then behaves as though you never asked for
@@ -38,7 +38,7 @@ give finer control.
 
 > **Correction (2026-08-31, from AssemblyAI's own integration guide):** omitting
 > `speech_models` does **not** default to the current flagship. The server
-> applies `["universal-3-pro", "universal-2"]` — note *3-pro*, not *3-5-pro*. So
+> applies `["universal-3-pro", "universal-2"]` — note _3-pro_, not _3-5-pro_. So
 > the pre-recorded path **must set `speech_models` explicitly** to
 > `["universal-3-5-pro", "universal-2"]` or it silently runs a older model. The
 > API reference page reads as though 3.5 is the default; it is not. Treat this
@@ -80,18 +80,18 @@ overridable with `ASSEMBLYAI_SPEECH_MODEL`.
 Mapped to typed errors in `packages/aai-client/src/types.ts`
 (`RealtimeCloseCode`) with a reconnect policy per code.
 
-| Code | Meaning | NeuraCall's response |
-| --- | --- | --- |
-| 1000 | Normal — follows `Termination` | Expected; no reconnect |
-| 1006 | Abnormal (no close frame) — network drop | Reconnect with backoff |
-| 1008 | Missing/invalid token, account issue, new-session rate limit | Do **not** retry blindly; surface a config error |
-| 1011 | Server error while establishing the connection | Reconnect with backoff |
-| 3005 | Session cancelled — catch-all server error | Reconnect with backoff |
-| 3006 | Invalid message type / malformed JSON / inactivity timeout | Bug or idle session; do not hammer |
-| 3007 | Chunk outside 50–1000 ms, or audio sent too fast | Halve the chunk size and reconnect — never crash |
+| Code | Meaning                                                         | NeuraCall's response                              |
+| ---- | --------------------------------------------------------------- | ------------------------------------------------- |
+| 1000 | Normal — follows `Termination`                                  | Expected; no reconnect                            |
+| 1006 | Abnormal (no close frame) — network drop                        | Reconnect with backoff                            |
+| 1008 | Missing/invalid token, account issue, new-session rate limit    | Do **not** retry blindly; surface a config error  |
+| 1011 | Server error while establishing the connection                  | Reconnect with backoff                            |
+| 3005 | Session cancelled — catch-all server error                      | Reconnect with backoff                            |
+| 3006 | Invalid message type / malformed JSON / inactivity timeout      | Bug or idle session; do not hammer                |
+| 3007 | Chunk outside 50–1000 ms, or audio sent too fast                | Halve the chunk size and reconnect — never crash  |
 | 3008 | 3-hour cap (or the temp token's `max_session_duration_seconds`) | Expected on very long calls; open a fresh session |
-| 3009 | Too many concurrent sessions | Queue rather than fail — see §6 |
-| 410 | The V2 streaming endpoint is retired | Never use V2 |
+| 3009 | Too many concurrent sessions                                    | Queue rather than fail — see §6                   |
+| 410  | The V2 streaming endpoint is retired                            | Never use V2                                      |
 
 ## 5. `Terminate` is mandatory, and it is a billing decision
 

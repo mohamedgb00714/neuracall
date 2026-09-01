@@ -34,9 +34,7 @@ export interface TtsClient {
  * speech instead of completing instantly.
  */
 export class SilentTts implements TtsClient {
-  constructor(
-    private readonly opts: { sampleRate?: number; wordsPerMinute?: number } = {},
-  ) {}
+  constructor(private readonly opts: { sampleRate?: number; wordsPerMinute?: number } = {}) {}
 
   async synthesize(request: TtsRequest): Promise<SynthesizedSpeech> {
     const sampleRate = this.opts.sampleRate ?? 16000;

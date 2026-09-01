@@ -39,17 +39,17 @@ answer-and-reply loop exists as a library and is covered end to end by
 `packages/e2e`, but the desktop app has not been wired to it yet. That is the
 single biggest gap between "the code can do it" and "the app does it".
 
-| Package | Owns | Notably does **not** own |
-| --- | --- | --- |
-| `@neuracall/config` | `.env` loading, fail-fast validation of `ASSEMBLYAI_API_KEY`, region → REST/realtime/token endpoints in one place, the masked startup banner. | Anything provider-specific beyond AssemblyAI. |
-| `@neuracall/audio-pipeline` | Pure PCM: downmix, linear resample, chunking, `EnergyVad`. `CallAudioSession` with its two labelled streams. `CallRecorder` (streaming WAV + JSON sidecar). `tee`. | Any process, socket or file descriptor it did not open itself. No native code. |
-| `@neuracall/aai-client` | The realtime v3 WebSocket, hand-rolled on `ws`: `RealtimeStream` (connect, `sendAudio`, `UpdateConfiguration`, explicit `Terminate`), `RealtimeSessionManager` (bounded concurrency with a FIFO queue), close-code → retry policy with jittered backoff, temporary-token minting. | Audio conversion. It receives chunks already in the contract format. |
-| `@neuracall/scrcpy-bridge` | One `scrcpy` process per phone, WAV-header parsing, the FIFO (Linux/macOS) and temp-file (Windows) transports, `adb`/`scrcpy` detection with per-OS install guides, and the ordered capture-source preference list. | Deciding *when* to capture. |
-| `@neuracall/device-manager` | `adb devices` polling, USB vs Wi-Fi endpoints, device phase (`online`/`incoming`/`in-call`/`busy`/`offline`), `AndroidCallController` (answer, hang up, dial, DTMF, call state via `dumpsys telephony.registry`), `AdbCallChannelDetector` (cellular vs WhatsApp), `devices.json`. | Audio, in any form. |
-| `@neuracall/orchestrator` | The call lifecycle. `CallStateMachine`, `Orchestrator`, `ScrcpyAudioCapture`, `CommandAudioInjector`, `MemoryCallRecordStore` / `JsonlCallRecordStore`. | The conversation. It calls a `CallAgent` interface. |
-| `@neuracall/agent` | The brain: `LlmCallAgent`, `ConversationStore`, the `LlmClient` and `TtsClient` ports, `OpenAiCompatibleLlmClient`, and abort-driven barge-in. | Audio transport. It returns PCM and text; the orchestrator plays it. |
-| `@neuracall/e2e` | Composing the real stack with fakes only at its outer edges (adb, the A2I socket, scrcpy, the LLM, TTS). | Anything shipped. Test-only, no `dist/`. |
-| `@neuracall/desktop` | Electron main process runtime (device pool, session manager, per-device capture, call control), IPC, and the React control centre. | The AssemblyAI key ever reaching the renderer. |
+| Package                     | Owns                                                                                                                                                                                                                                                                               | Notably does **not** own                                                       |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `@neuracall/config`         | `.env` loading, fail-fast validation of `ASSEMBLYAI_API_KEY`, region → REST/realtime/token endpoints in one place, the masked startup banner.                                                                                                                                      | Anything provider-specific beyond AssemblyAI.                                  |
+| `@neuracall/audio-pipeline` | Pure PCM: downmix, linear resample, chunking, `EnergyVad`. `CallAudioSession` with its two labelled streams. `CallRecorder` (streaming WAV + JSON sidecar). `tee`.                                                                                                                 | Any process, socket or file descriptor it did not open itself. No native code. |
+| `@neuracall/aai-client`     | The realtime v3 WebSocket, hand-rolled on `ws`: `RealtimeStream` (connect, `sendAudio`, `UpdateConfiguration`, explicit `Terminate`), `RealtimeSessionManager` (bounded concurrency with a FIFO queue), close-code → retry policy with jittered backoff, temporary-token minting.  | Audio conversion. It receives chunks already in the contract format.           |
+| `@neuracall/scrcpy-bridge`  | One `scrcpy` process per phone, WAV-header parsing, the FIFO (Linux/macOS) and temp-file (Windows) transports, `adb`/`scrcpy` detection with per-OS install guides, and the ordered capture-source preference list.                                                                | Deciding _when_ to capture.                                                    |
+| `@neuracall/device-manager` | `adb devices` polling, USB vs Wi-Fi endpoints, device phase (`online`/`incoming`/`in-call`/`busy`/`offline`), `AndroidCallController` (answer, hang up, dial, DTMF, call state via `dumpsys telephony.registry`), `AdbCallChannelDetector` (cellular vs WhatsApp), `devices.json`. | Audio, in any form.                                                            |
+| `@neuracall/orchestrator`   | The call lifecycle. `CallStateMachine`, `Orchestrator`, `ScrcpyAudioCapture`, `CommandAudioInjector`, `MemoryCallRecordStore` / `JsonlCallRecordStore`.                                                                                                                            | The conversation. It calls a `CallAgent` interface.                            |
+| `@neuracall/agent`          | The brain: `LlmCallAgent`, `ConversationStore`, the `LlmClient` and `TtsClient` ports, `OpenAiCompatibleLlmClient`, and abort-driven barge-in.                                                                                                                                     | Audio transport. It returns PCM and text; the orchestrator plays it.           |
+| `@neuracall/e2e`            | Composing the real stack with fakes only at its outer edges (adb, the A2I socket, scrcpy, the LLM, TTS).                                                                                                                                                                           | Anything shipped. Test-only, no `dist/`.                                       |
+| `@neuracall/desktop`        | Electron main process runtime (device pool, session manager, per-device capture, call control), IPC, and the React control centre.                                                                                                                                                 | The AssemblyAI key ever reaching the renderer.                                 |
 
 Everything external — HTTP, child processes, clocks, the filesystem root, the
 WebSocket factory — is injectable. That is not stylistic: it is what makes
@@ -144,10 +144,10 @@ They are not symmetric, and conflating them is the classic failure: feed the
 wrong direction to STT and the agent transcribes itself, then answers its own
 last sentence.
 
-| Stream | Direction | Carries | Mechanism |
-| --- | --- | --- | --- |
+| Stream     | Direction    | Carries    | Mechanism                                                                   |
+| ---------- | ------------ | ---------- | --------------------------------------------------------------------------- |
 | `remoteIn` | far end → us | the caller | **Captured** with scrcpy, resampled, VAD-aware, fed to STT and the recorder |
-| `localOut` | us → far end | the agent | **Injected** through an `AudioInjector` — scrcpy cannot do this |
+| `localOut` | us → far end | the agent  | **Injected** through an `AudioInjector` — scrcpy cannot do this             |
 
 Every chunk leaving `remoteIn` is tagged with `direction`, `deviceId`, `callId`
 and `channelId`, so one sink can serve several concurrent calls and still route
@@ -206,7 +206,7 @@ Bluetooth HFP, an on-device helper app, or acoustic coupling. Full treatment in
 **Why the key never crosses.** The renderer is a browser context. Anything
 handed to it is reachable from DevTools, from any dependency running in that
 context, and from any page it is ever pointed at. So the main process exposes
-*capabilities*, not credentials: "start a session for this device and channel"
+_capabilities_, not credentials: "start a session for this device and channel"
 crosses the bridge, the key that authorises it does not. The renderer cannot
 open a socket to AssemblyAI even if it wanted to, because it has nothing to
 authenticate with.
@@ -238,11 +238,11 @@ window.
 
 ## 5. Persistence
 
-| What | Where | Format |
-| --- | --- | --- |
-| Wireless adb endpoints | `devices.json` at the repo root | versioned JSON, written atomically by `scripts/adb-setup.sh` and read by `devicesFile.ts` |
-| Call records | wherever the store is pointed | `JsonlCallRecordStore` — append-only JSON Lines; the last entry for a `callId` wins, so a crash mid-call is survivable and replaying into SQLite later is trivial |
-| Call audio | `<baseDir>/recordings/<deviceId>/<callId>.wav` + `.json` | 16-bit mono PCM RIFF/WAVE, header sizes patched on every flush so the file is playable even if the process dies |
+| What                   | Where                                                    | Format                                                                                                                                                            |
+| ---------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Wireless adb endpoints | `devices.json` at the repo root                          | versioned JSON, written atomically by `scripts/adb-setup.sh` and read by `devicesFile.ts`                                                                         |
+| Call records           | wherever the store is pointed                            | `JsonlCallRecordStore` — append-only JSON Lines; the last entry for a `callId` wins, so a crash mid-call is survivable and replaying into SQLite later is trivial |
+| Call audio             | `<baseDir>/recordings/<deviceId>/<callId>.wav` + `.json` | 16-bit mono PCM RIFF/WAVE, header sizes patched on every flush so the file is playable even if the process dies                                                   |
 
 `baseDir` is meant to be `data/`, which is git-ignored. Files are created 0600
 and the per-device directory 0700. Never point `baseDir` at a tracked

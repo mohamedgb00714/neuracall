@@ -53,12 +53,18 @@ function behavesLikeACallStore(name: string, make: () => CallRecordStore): void 
     await store.save(record({ callId: "b", startedAt: 300, deviceId: "PHONE-2" }));
     await store.save(record({ callId: "c", startedAt: 200, deviceId: "PHONE-1" }));
 
-    assert.deepEqual((await store.list()).map((r) => r.callId), ["b", "c", "a"]);
+    assert.deepEqual(
+      (await store.list()).map((r) => r.callId),
+      ["b", "c", "a"],
+    );
     assert.deepEqual(
       (await store.list({ deviceId: "PHONE-1" })).map((r) => r.callId),
       ["c", "a"],
     );
-    assert.deepEqual((await store.list({ limit: 2 })).map((r) => r.callId), ["b", "c"]);
+    assert.deepEqual(
+      (await store.list({ limit: 2 })).map((r) => r.callId),
+      ["b", "c"],
+    );
   });
 
   test(`${name}: hands out copies, so a caller cannot mutate the store`, async () => {

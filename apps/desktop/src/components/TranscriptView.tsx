@@ -17,24 +17,17 @@ export function TranscriptView({
       <h2>Live Transcripts</h2>
 
       {turns.length === 0 && sessions.length === 0 ? (
-        <p className="empty">
-          No sessions yet. Start listening on a device to see live captions.
-        </p>
+        <p className="empty">No sessions yet. Start listening on a device to see live captions.</p>
       ) : (
         <div className="transcript-list">
           {turns.map((t) => (
-            <div
-              key={t.id}
-              className={`turn-row ${t.turn.final ? "turn-final" : "turn-partial"}`}
-            >
+            <div key={t.id} className={`turn-row ${t.turn.final ? "turn-final" : "turn-partial"}`}>
               <span className="turn-key">
                 {t.deviceId} / {t.channelId}
               </span>
               <span className="turn-time">{new Date(t.time).toLocaleTimeString()}</span>
               <span className="turn-text">{t.turn.transcript}</span>
-              {t.turn.speakerLabel && (
-                <span className="turn-speaker">{t.turn.speakerLabel}</span>
-              )}
+              {t.turn.speakerLabel && <span className="turn-speaker">{t.turn.speakerLabel}</span>}
             </div>
           ))}
         </div>

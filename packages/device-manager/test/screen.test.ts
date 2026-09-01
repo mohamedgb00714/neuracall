@@ -1,12 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { CommandRunner } from "../src/adb.js";
-import {
-  ScreenController,
-  parseAwake,
-  parseLocked,
-  parseSecureLock,
-} from "../src/screen.js";
+import { ScreenController, parseAwake, parseLocked, parseSecureLock } from "../src/screen.js";
 
 // Verbatim from the realme RMX3624 (Android 13) while awake and unlocked.
 const POWER_AWAKE = "  mWakefulness=Awake\n  Display Power: state=ON";
@@ -63,7 +58,9 @@ test("a dump with no signal is assumed awake rather than assumed asleep", () => 
 
 test("an already-awake, unlocked phone is left alone", async () => {
   const r = runner({ "dumpsys power": POWER_AWAKE, "dumpsys window": WINDOW_UNLOCKED });
-  const state = await new ScreenController(r, "SERIAL", { sleep: async () => undefined }).ensureAwake();
+  const state = await new ScreenController(r, "SERIAL", {
+    sleep: async () => undefined,
+  }).ensureAwake();
   assert.deepEqual(state, { awake: true, locked: false, secure: false });
   assert.ok(
     !r.commands.some((c) => c.join(" ").includes("keyevent")),
@@ -88,7 +85,9 @@ test("a sleeping phone is woken and its keyguard dismissed", async () => {
       return "";
     },
   };
-  const state = await new ScreenController(r, "SERIAL", { sleep: async () => undefined }).ensureAwake();
+  const state = await new ScreenController(r, "SERIAL", {
+    sleep: async () => undefined,
+  }).ensureAwake();
   assert.equal(state.locked, false);
   assert.ok(commands.some((c) => c.join(" ").includes("dismiss-keyguard")));
 });
@@ -97,7 +96,9 @@ test("a PIN-locked phone is reported, not silently tapped into", async () => {
   // adb cannot clear a secure keyguard. Saying so beats sending taps to a lock
   // screen and reporting a mysterious dialling failure.
   const r = runner({ "dumpsys power": POWER_AWAKE, "dumpsys window": WINDOW_LOCKED_SECURE });
-  const state = await new ScreenController(r, "SERIAL", { sleep: async () => undefined }).ensureAwake();
+  const state = await new ScreenController(r, "SERIAL", {
+    sleep: async () => undefined,
+  }).ensureAwake();
   assert.equal(state.locked, true);
   assert.equal(state.secure, true);
 });

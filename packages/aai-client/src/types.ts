@@ -36,13 +36,7 @@ export enum RealtimeCloseCode {
 
 /** Possible states of a realtime session. */
 export type SessionState =
-  | "idle"
-  | "connecting"
-  | "open"
-  | "reconnecting"
-  | "terminating"
-  | "closed"
-  | "error";
+  "idle" | "connecting" | "open" | "reconnecting" | "terminating" | "closed" | "error";
 
 export interface Word {
   text: string;

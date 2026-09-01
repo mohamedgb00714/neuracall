@@ -52,10 +52,7 @@ export interface WsLike extends EventEmitter {
 }
 
 /** Build a WebSocket as `ws` does, so a mock can be injected in tests. */
-export type WebSocketFactory = (
-  url: string,
-  opts?: { headers?: Record<string, string> },
-) => WsLike;
+export type WebSocketFactory = (url: string, opts?: { headers?: Record<string, string> }) => WsLike;
 
 /** The real `ws` WebSocket honours WsLike. */
 const realWsFactory: WebSocketFactory = (url, opts) => new WebSocket(url, opts);
@@ -125,10 +122,7 @@ export class RealtimeStream extends EventEmitter {
         return;
       }
 
-      const url = buildWebSocketUrl(
-        this.config.assemblyai.realtimeHost,
-        this.params,
-      );
+      const url = buildWebSocketUrl(this.config.assemblyai.realtimeHost, this.params);
 
       // Authentication: temp token goes in the query string; otherwise the
       // raw API key goes in the upgrade header (no Bearer prefix per docs).
@@ -282,9 +276,7 @@ export class RealtimeStream extends EventEmitter {
     this.ws = null;
   }
 
-  private handleMessage(
-    raw: string | Buffer | Uint8Array | ArrayBuffer,
-  ): void {
+  private handleMessage(raw: string | Buffer | Uint8Array | ArrayBuffer): void {
     let msg: ServerMessage;
     try {
       msg = JSON.parse(raw.toString()) as ServerMessage;
@@ -321,7 +313,10 @@ export class RealtimeStream extends EventEmitter {
         this.emit("termination", msg);
         break;
       default:
-        this.emit("error", new Error(`Unknown server message type: ${(msg as { type: string }).type}`));
+        this.emit(
+          "error",
+          new Error(`Unknown server message type: ${(msg as { type: string }).type}`),
+        );
     }
   }
 
@@ -337,7 +332,10 @@ export class RealtimeStream extends EventEmitter {
       // a valid size instead of crashing the session.
       const floor = Math.max(64, Math.floor(this.params.sampleRate / 10));
       const corrected = Math.max(floor, Math.floor(this.chunkBytes / 2));
-      this.emit("warn", `Server rejected audio chunk (3007); reducing chunk size to ${corrected} bytes.`);
+      this.emit(
+        "warn",
+        `Server rejected audio chunk (3007); reducing chunk size to ${corrected} bytes.`,
+      );
       this.chunkBytes = corrected;
       this.emit(
         "error",

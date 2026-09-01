@@ -49,10 +49,7 @@ test("buildWebSocketUrl serializes keyterms_prompt and agent_context", () => {
     parsed.searchParams.get("keyterms_prompt"),
     JSON.stringify(["AssemblyAI", "Neuracall"]),
   );
-  assert.equal(
-    parsed.searchParams.get("agent_context"),
-    "Your reservation is confirmed.",
-  );
+  assert.equal(parsed.searchParams.get("agent_context"), "Your reservation is confirmed.");
   assert.equal(parsed.searchParams.get("speaker_labels"), "true");
   assert.equal(parsed.searchParams.get("max_speakers"), "2");
 });

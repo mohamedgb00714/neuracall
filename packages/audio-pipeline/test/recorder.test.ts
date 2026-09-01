@@ -164,10 +164,7 @@ test("an unwritable destination fails loudly at construction", () => {
     const locked = join(dir, "locked");
     writeFileSync(join(dir, "placeholder"), "x");
     chmodSync(dir, 0o500); // read + execute, no write
-    assert.throws(
-      () => newRecorder(locked),
-      /recordings directory is not writable|cannot create/,
-    );
+    assert.throws(() => newRecorder(locked), /recordings directory is not writable|cannot create/);
   } finally {
     chmodSync(dir, 0o700);
     rmSync(dir, { recursive: true, force: true });

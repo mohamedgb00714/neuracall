@@ -52,9 +52,18 @@ test("the player is auto-detected in preference order", () => {
   // PipeWire wins when everything is present.
   assert.equal(detectAudioPlayer(HAS_ALL), "pw-play");
   // Falls through as each is missing.
-  assert.equal(detectAudioPlayer((b) => b !== "pw-play"), "paplay");
-  assert.equal(detectAudioPlayer((b) => b === "aplay"), "aplay");
-  assert.equal(detectAudioPlayer(() => false), null);
+  assert.equal(
+    detectAudioPlayer((b) => b !== "pw-play"),
+    "paplay",
+  );
+  assert.equal(
+    detectAudioPlayer((b) => b === "aplay"),
+    "aplay",
+  );
+  assert.equal(
+    detectAudioPlayer(() => false),
+    null,
+  );
 });
 
 test("no player installed is a clear error, not a mystery silence", () => {
@@ -72,16 +81,31 @@ test("each player gets argv describing the raw PCM format", () => {
   assert.deepEqual(pa.buildArgs(), ["--raw", "--format=s16le", "--rate=8000", "--channels=2"]);
 
   const al = new CommandAudioInjector({ player: "aplay", sampleRate: 16000, channels: 1 });
-  assert.deepEqual(al.buildArgs(), ["-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw", "-"]);
+  assert.deepEqual(al.buildArgs(), [
+    "-q",
+    "-f",
+    "S16_LE",
+    "-r",
+    "16000",
+    "-c",
+    "1",
+    "-t",
+    "raw",
+    "-",
+  ]);
 });
 
 test("a sink targets a specific device — this is how Bluetooth HFP is selected", () => {
   const hfp = "bluez_output.AA_BB_CC_DD_EE_FF.1";
   assert.ok(
-    new CommandAudioInjector({ player: "pw-play", sink: hfp }).buildArgs().includes(`--target=${hfp}`),
+    new CommandAudioInjector({ player: "pw-play", sink: hfp })
+      .buildArgs()
+      .includes(`--target=${hfp}`),
   );
   assert.ok(
-    new CommandAudioInjector({ player: "paplay", sink: hfp }).buildArgs().includes(`--device=${hfp}`),
+    new CommandAudioInjector({ player: "paplay", sink: hfp })
+      .buildArgs()
+      .includes(`--device=${hfp}`),
   );
 });
 

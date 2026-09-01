@@ -144,9 +144,9 @@ export function ContactsPage() {
         <div className="contacts-unavailable">
           <h2>No contact database</h2>
           <p>
-            Contacts need <code>node:sqlite</code>, which arrived in Node 22. This build of
-            Electron ships Node 20, so calls are being recorded to an append-only{" "}
-            <code>calls.jsonl</code> instead and there is nothing to look up by caller.
+            Contacts need <code>node:sqlite</code>, which arrived in Node 22. This build of Electron
+            ships Node 20, so calls are being recorded to an append-only <code>calls.jsonl</code>{" "}
+            instead and there is nothing to look up by caller.
           </p>
           <p className="muted">
             Everything else — answering, transcribing, the call log on the Calls tab — works

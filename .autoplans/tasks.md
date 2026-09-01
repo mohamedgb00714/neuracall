@@ -2,20 +2,22 @@
 
 ## Current Tasks
 
-
 ### Phase 2: Call audio recording — capture phone audio to disk alongside live STT [PENDING]
+
 **ID:** `403c3502-20f8-490b-9555-bfe1d72df79a`
 **Priority:** high | **Type:** coding
 
 Record each answered call's audio to disk (e.g. WAV in the per-call audio directory) while the same stream is being fed to live realtime transcription, so there is a replayable artifact per call.
 
 Scope:
+
 - In the audio-pipeline (or a thin recorder wrapper), tee each admitted silent-free segment: one copy to the realtime client for live STT, one copy to a per-call WAV writer.
 - Write 16-bit mono PCM at 16 kHz WAV (with a proper 44-byte RIFF header) into data/recordings/<deviceId>/<callId>.wav, flushing periodically and finalising the header on call end.
 - Include call metadata (deviceId, channelId, local/remote party label, timestamps) alongside, e.g. data/recordings/<deviceId>/<callId>.json.
 - Disk-safety: bound the max recording length, fail loudly if the target is unwritable, never buffer an unbounded amount in memory (stream to disk).
 
 Done:
+
 - A call that goes through the pipeline produces a playable WAV file whose audio matches what was transcribed live, plus its metadata JSON.
 - Unit test: a synthetic mono 16k PCM buffer written through the recorder yields a valid WAV (RIFF/WAVE header + correct PCM sample count) and the metadata file.
 
@@ -23,14 +25,15 @@ Out of scope here: post-call transcript/summary generation (that is the optional
 
 ---
 
-
 ### Phase 6: CRM — contact store + call-history linking in the desktop app [PENDING]
+
 **ID:** `aa429a33-e531-4695-b9a8-76fa8d51b70e`
 **Priority:** medium | **Type:** coding
 
 Add a lightweight CRM to the NeuraCall desktop app so every call is tied to a known contact/customer and the context is queryable and reusable, not just a raw transcript.
 
 Scope (first vertical slice, keep pragmatic):
+
 - Contact store: a local SQLite-backed repository (contacts + orgs, phone numbers, tags, notes). Seeded from the device's contact list where possible (via ADB dump or manual import).
 - Call linking: when a call is answered, match the remote number to a contact (exact or fuzzy/normalized match) and attach the contact to the call record alongside its transcript.
 - Call history: persist per-call records (deviceId, channelId, direction, timestamps, contactId, transcript, audio path). Queryable by contact and by date.
@@ -38,6 +41,7 @@ Scope (first vertical slice, keep pragmatic):
 - Data flow: all reads/writes go through the Electron main-process Service (IPC), never the renderer directly; the renderer only gets DTOs.
 
 Done:
+
 - A contact can be created, listed, and linked to a call (renderer view + IPC + store).
 - Two calls from the same normalized number group under one contact in the history view.
 - Unit tests for the store (contact create/find, call insert, group-by-contact query) using an in-memory/DB.
@@ -46,8 +50,8 @@ Out of scope for this task: two-way sync with Google/Outlook contacts, CRM as a 
 
 ---
 
-
 ### Phase 0: Project scaffolding — Node.js/TypeScript monorepo + config [IN_PROGRESS]
+
 **ID:** `14f440c2-a9ba-4845-8d3b-3a0ab3a50d89`
 **Priority:** high | **Type:** coding
 
@@ -55,8 +59,8 @@ Scaffold the NeuraCall backend as a TypeScript Node.js project. Set up: package.
 
 ---
 
-
 ### Phase 0: Verify AssemblyAI live docs and pin SDK version [PENDING]
+
 **ID:** `f10175ef-a233-485d-9ae6-b2eabfc70951`
 **Priority:** high | **Type:** documentation
 
@@ -64,8 +68,8 @@ Before writing any A2I code, fetch the current live docs (llms.txt / llms-full.t
 
 ---
 
-
 ### Phase 0: Set up AssemblyAI API key + region config in env [PENDING]
+
 **ID:** `9749a28b-3850-4762-8395-5cee532975ed`
 **Priority:** high | **Type:** coding
 
@@ -73,8 +77,8 @@ Document and wire the ASSEMBLYAI_API_KEY and base-URL selection (US api.assembly
 
 ---
 
-
 ### Phase 1: Wireless ADB bootstrap script (one-time USB handshake + reconnect helpers) [IN_PROGRESS]
+
 **ID:** `35589d9a-8d6a-4a72-9599-6a52d9af1c0f`
 **Priority:** high | **Type:** coding
 
@@ -82,8 +86,8 @@ Write scripts/adb-setup.sh that: (1) detects connected USB devices, (2) runs `ad
 
 ---
 
-
 ### Phase 1: Device manager service — enumerate, heartbeat, state tracking [COMPLETED]
+
 **ID:** `e321d519-caee-48fd-a8a0-954a349088e6`
 **Priority:** high | **Type:** coding
 
@@ -91,8 +95,8 @@ A device-manager Node service that: (1) reconciles the pool against `adb devices
 
 ---
 
-
 ### Phase 1: Call control adapter — answer, hang up, dial via ADB keyevents [COMPLETED]
+
 **ID:** `d752a3a6-3420-4719-ae35-273c1fa5003d`
 **Priority:** high | **Type:** coding
 
@@ -100,8 +104,8 @@ Abstract call control behind an interface: ICallController with answer()/hangUp(
 
 ---
 
-
 ### Phase 1: scrcpy audio bridge — stream phone mic/call audio to a per-device virtual cable [WAITING_FOR_REVIEW]
+
 **ID:** `054835f6-973c-4e23-aa03-cb4bc2ac8d3d`
 **Priority:** high | **Type:** coding
 
@@ -109,8 +113,8 @@ For each device, launch `scrcpy -s <endpoint> --no-video --audio-source=mic` (an
 
 ---
 
-
 ### Phase 2: Audio pipeline — pull PCM from each sink, resample to 16 kHz mono PCM16 [COMPLETED]
+
 **ID:** `72df25a5-a7bf-43c6-8867-b39693dd861d`
 **Priority:** high | **Type:** coding
 
@@ -118,8 +122,8 @@ An audio-pipeline service that, per active device, captures the stream from the 
 
 ---
 
-
 ### Phase 2: Dual-stream handling — remote party vs local mic/call audio [PENDING]
+
 **ID:** `ef829ced-344e-41fe-ab05-d5497872a973`
 **Priority:** high | **Type:** coding
 
@@ -127,8 +131,8 @@ Design the audio layout for a real phone call: we need the remote (caller) audio
 
 ---
 
-
 ### Phase 2: VAD/activity gating in the pipeline (only send speech to A2I) [COMPLETED]
+
 **ID:** `6f297b6c-126b-40e7-824c-3afe00c4b241`
 **Priority:** medium | **Type:** coding
 
@@ -136,8 +140,8 @@ Add lightweight voice-activity detection in the audio-pipeline so we only send m
 
 ---
 
-
 ### Phase 3: aai-client — realtime STT wrapper (U3.5 Pro) with token minting + lifecycle [PENDING]
+
 **ID:** `48f65544-d468-484f-8fd1-406484778e5d`
 **Priority:** critical | **Type:** coding
 
@@ -145,8 +149,8 @@ Wrap the current AssemblyAI Node SDK (verified against live docs in Phase 0) in 
 
 ---
 
-
 ### Phase 3: Dual-session STT — run concurrent streams per device (one per simultaneous call) [PENDING]
+
 **ID:** `cb2ed508-97d6-4070-9b73-6d821672e589`
 **Priority:** critical | **Type:** coding
 
@@ -154,8 +158,8 @@ Because NeuraCall handles real cellular AND WhatsApp calls simultaneously, multi
 
 ---
 
-
 ### Phase 3: Handle realtime events — Turn, SpeechStarted, SpeakerRevision, Termination, close codes [PENDING]
+
 **ID:** `3bdcb0c9-4abf-4424-8722-5704a96b8318`
 **Priority:** high | **Type:** coding
 
@@ -163,8 +167,8 @@ Implement the full realtime event contract: emit SpeechStarted, route Turn (part
 
 ---
 
-
 ### Phase 3: Turn-taking biasing — agent_context + keyterms_prompt via UpdateConfiguration [PENDING]
+
 **ID:** `5c52e33d-63f3-457c-8189-444f184f2867`
 **Priority:** high | **Type:** coding
 
@@ -172,8 +176,8 @@ Integrate agent_context to bias the next user turn with the agent's last spoken 
 
 ---
 
-
 ### Phase 3: Optional pre-recorded path — post-call transcripts via /v2/transcript + LLM Gateway summaries [PENDING]
+
 **ID:** `f4c80243-8724-42c3-81ea-ded19e0b1dd3`
 **Priority:** medium | **Type:** coding
 
@@ -181,8 +185,8 @@ For post-call analytics, capture the per-call remote audio to file and optionall
 
 ---
 
-
 ### Phase 4: WhatsApp voice-call detection + routing (per device via ADB/UIAutomator) [PENDING]
+
 **ID:** `2e9f4efa-58a0-4c25-aa9c-8f08dcc5a0a1`
 **Priority:** high | **Type:** coding
 
@@ -190,8 +194,8 @@ NeuraCall receives WhatsApp voice calls on the hijacked phones. Detect an incomi
 
 ---
 
-
 ### Phase 4: WhatsApp text-message inbound/outbound via WhatsApp Web/desktop bridge [PENDING]
+
 **ID:** `3150e78e-215d-453e-a16d-e6bd9b28d369`
 **Priority:** low | **Type:** coding
 
@@ -199,8 +203,8 @@ Layer on the WhatsApp Cloud API or a WhatsApp Web/DOM bridge so the same agent l
 
 ---
 
-
 ### Phase 5: Orchestrator — per-call state machines (idle->incoming->answered->talking->ended) [PENDING]
+
 **ID:** `38ba36b1-6f4d-48df-ac02-fb6c9a421510`
 **Priority:** critical | **Type:** coding
 
@@ -208,8 +212,8 @@ Central orchestrator that owns the lifecycle of each call: acquires a free devic
 
 ---
 
-
 ### Phase 5: AI agent brain — final-turn intake, LLM reply, barge-in handling, per-channel context [PENDING]
+
 **ID:** `8815d807-b2fe-40a7-ae49-f85b8a05aa2e`
 **Priority:** high | **Type:** coding
 
@@ -217,8 +221,8 @@ The agent logic: on each final Turn, feed it plus keep the per-call conversation
 
 ---
 
-
 ### Phase 5: TTS + audio injection into the phone (agent voice plays back on the call) [PENDING]
+
 **ID:** `0d64c17e-b083-4744-9da2-ca3c0ffc3b85`
 **Priority:** high | **Type:** coding
 
@@ -226,8 +230,8 @@ Stand up the TTS pipeline (provider of choice, e.g. ElevenLabs/OpenAI/Play.ht) t
 
 ---
 
-
 ### Phase 6: Test harness + QA suite (component + end-to-end stubs) [PENDING]
+
 **ID:** `8637c1d6-4745-472b-924b-3da55d3a4b1f`
 **Priority:** high | **Type:** testing
 
@@ -235,8 +239,8 @@ Stand up the automated test layer: unit tests for every service (device-manager,
 
 ---
 
-
 ### Phase 6: Resilience — reconnect/backoff, capacity queue, watchdog, observability [PENDING]
+
 **ID:** `44712cc2-6de8-4e69-9de6-b9f0adc9ebf2`
 **Priority:** high | **Type:** coding
 
@@ -244,8 +248,8 @@ Production resilience: (1) A2I stream reconnect with exponential backoff for 5xx
 
 ---
 
-
 ### Phase 6: Dashboard — live device/call/transcript view + call history [PENDING]
+
 **ID:** `47fad924-c3f6-43e8-8a2a-fcaac540cf0f`
 **Priority:** medium | **Type:** coding
 
@@ -253,8 +257,8 @@ A simple web dashboard (reads the SQLite DB/metrics API) showing: device pool st
 
 ---
 
-
 ### Phase 6: Documentation — runbook, config reference, multi-device/5GHz Wi-Fi notes [PENDING]
+
 **ID:** `cccb4640-09fc-4c78-8a12-5ae845c97a6c`
 **Priority:** medium | **Type:** documentation
 
@@ -262,8 +266,7 @@ Write README + docs/: architecture overview, runbook (startup order: adb-setup -
 
 ---
 
-
 ---
 
-*Last updated: 2026-08-31T13:58:35.073Z*
-*Managed by autoplans.dev*
+_Last updated: 2026-08-31T13:58:35.073Z_
+_Managed by autoplans.dev_

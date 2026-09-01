@@ -62,7 +62,11 @@ test("stress: 4 concurrent sessions route final Turns to their own (deviceId, ch
     const mine = received.filter(
       (r) => r.key.deviceId === key.deviceId && r.key.channelId === key.channelId,
     );
-    assert.equal(mine.length, 1, `session ${key.deviceId}/${key.channelId} should get exactly one Turn`);
+    assert.equal(
+      mine.length,
+      1,
+      `session ${key.deviceId}/${key.channelId} should get exactly one Turn`,
+    );
     assert.equal(mine[0]!.turn.transcript, TRANSCRIPTS[i]);
     assert.equal(mine[0]!.turn.final, true);
 
@@ -137,9 +141,7 @@ test("a subscribed error still reaches the listener with its session key", async
     wsFactory: () => server.socket,
   });
   const seen: Array<{ key: SessionKey; message: string }> = [];
-  manager.on("error", (key: SessionKey, err: Error) =>
-    seen.push({ key, message: err.message }),
-  );
+  manager.on("error", (key: SessionKey, err: Error) => seen.push({ key, message: err.message }));
 
   const key: SessionKey = { deviceId: "SERIAL", channelId: "whatsapp" };
   const stream = await manager.open(key, { params: TEST_PARAMS });

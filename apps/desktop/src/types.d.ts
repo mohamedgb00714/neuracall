@@ -288,9 +288,7 @@ export interface NeuraCallBridge {
   onAutopilotState(
     cb: (msg: { callId: string; state: string; reason?: string }) => void,
   ): () => void;
-  onAutopilotTranscript(
-    cb: (msg: { callId: string; entry: TranscriptEntry }) => void,
-  ): () => void;
+  onAutopilotTranscript(cb: (msg: { callId: string; entry: TranscriptEntry }) => void): () => void;
   onAutopilotError(cb: (msg: { message: string; callId?: string }) => void): () => void;
 
   /** False on a runtime without node:sqlite, where there is no contact database. */

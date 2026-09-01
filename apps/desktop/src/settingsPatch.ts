@@ -15,12 +15,7 @@
 // renderer neighbours use: this module is also compiled by the test project,
 // which is nodenext and rejects an extensionless relative import. The import is
 // type-only and therefore erased, so the bundler never resolves it either way.
-import type {
-  AssemblyAIRegion,
-  SettingsPatch,
-  TranscriptionMode,
-  TtsProvider,
-} from "./types.js";
+import type { AssemblyAIRegion, SettingsPatch, TranscriptionMode, TtsProvider } from "./types.js";
 
 /** How many keyterms the service will accept in one session. */
 export const MAX_KEYTERMS = 100;

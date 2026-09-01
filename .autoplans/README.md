@@ -13,4 +13,4 @@ This project is managed using [autoplans.dev](https://autoplans.dev) - an AI-pow
 
 ---
 
-*This directory is automatically managed by autoplans.dev. Manual edits may be overwritten.*
+_This directory is automatically managed by autoplans.dev. Manual edits may be overwritten._

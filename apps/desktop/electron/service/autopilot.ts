@@ -297,7 +297,11 @@ export class Autopilot extends EventEmitter {
           onResult: (result: PostCallResult) =>
             this.emit("postCall", result.callId, result.status, result.summary ?? null),
           onError: (result: PostCallResult) =>
-            this.emit("error", `post-call analysis failed: ${result.error ?? "unknown"}`, result.callId),
+            this.emit(
+              "error",
+              `post-call analysis failed: ${result.error ?? "unknown"}`,
+              result.callId,
+            ),
         })
       : null;
 
@@ -374,9 +378,13 @@ export class Autopilot extends EventEmitter {
       }
     }
     if (this.injection === "off") {
-      degraded.push("No injection sink configured — the caller cannot hear the agent (see docs/AUDIO-ABI.md).");
+      degraded.push(
+        "No injection sink configured — the caller cannot hear the agent (see docs/AUDIO-ABI.md).",
+      );
     } else if (this.injection === "unavailable") {
-      degraded.push("No audio player found on PATH — install pipewire-utils, pulseaudio-utils or alsa-utils.");
+      degraded.push(
+        "No audio player found on PATH — install pipewire-utils, pulseaudio-utils or alsa-utils.",
+      );
     }
 
     return {

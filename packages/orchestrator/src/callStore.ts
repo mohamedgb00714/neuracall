@@ -15,12 +15,7 @@
  * log into a table is trivial, and the last entry for a `callId` wins.
  */
 
-import {
-  appendFileSync,
-  mkdirSync,
-  readFileSync,
-  existsSync,
-} from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CallRecord, CallRecordStore } from "./types.js";
 
@@ -99,10 +94,7 @@ export class JsonlCallRecordStore implements CallRecordStore {
 }
 
 /** Newest first, optionally filtered by device and capped. */
-function query(
-  records: CallRecord[],
-  opts: { deviceId?: string; limit?: number },
-): CallRecord[] {
+function query(records: CallRecord[], opts: { deviceId?: string; limit?: number }): CallRecord[] {
   let out = records;
   if (opts.deviceId !== undefined) out = out.filter((r) => r.deviceId === opts.deviceId);
   out = [...out].sort((a, b) => b.startedAt - a.startedAt);

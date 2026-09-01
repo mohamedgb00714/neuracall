@@ -17,7 +17,14 @@
  * Everything here is synchronous and side-effect free apart from
  * loadDevicesFile / saveDevicesFile, so it can run inside a constructor.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname } from "node:path";
 
 /** Only version the parser understands. */
@@ -49,8 +56,7 @@ export interface DevicesFile {
 
 /** What saveDevicesFile / upsertDevices accept: a bare endpoint or a partial entry. */
 export type DevicesFileInput =
-  | string
-  | { endpoint: string; serial?: string; label?: string; addedAt?: string };
+  string | { endpoint: string; serial?: string; label?: string; addedAt?: string };
 
 /** Thrown for a malformed file or an invalid endpoint. */
 export class DevicesFileError extends Error {
@@ -95,7 +101,9 @@ export function normalizeEndpoint(raw: string, defaultPort = DEFAULT_ADB_TCP_POR
   } else {
     const colons = value.split(":").length - 1;
     if (colons > 1) {
-      throw new DevicesFileError(`endpoint "${value}" has several ':' — bracket IPv6 literals as [addr]:port`);
+      throw new DevicesFileError(
+        `endpoint "${value}" has several ':' — bracket IPv6 literals as [addr]:port`,
+      );
     }
     const idx = value.indexOf(":");
     host = idx === -1 ? value : value.slice(0, idx);
@@ -130,13 +138,19 @@ export function knownEndpoints(file: DevicesFile): string[] {
  * endpoints are normalized, duplicate endpoints collapse onto the first entry
  * (keeping the earliest addedAt). Entries without addedAt get `now`.
  */
-export function parseDevicesFile(text: string, opts: DevicesFileOptions & { path?: string } = {}): DevicesFile {
+export function parseDevicesFile(
+  text: string,
+  opts: DevicesFileOptions & { path?: string } = {},
+): DevicesFile {
   const path = opts.path;
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch (err) {
-    throw new DevicesFileError(`not valid JSON (${err instanceof Error ? err.message : String(err)})`, path);
+    throw new DevicesFileError(
+      `not valid JSON (${err instanceof Error ? err.message : String(err)})`,
+      path,
+    );
   }
   if (!isRecord(raw)) throw new DevicesFileError("top level must be an object", path);
   if (raw.version !== DEVICES_FILE_VERSION) {
@@ -150,7 +164,8 @@ export function parseDevicesFile(text: string, opts: DevicesFileOptions & { path
   const now = opts.now ?? (() => new Date());
   const entries: DevicesFileInput[] = raw.devices.map((item, i) => {
     if (!isRecord(item)) throw new DevicesFileError(`devices[${i}] must be an object`, path);
-    if (typeof item.endpoint !== "string") throw new DevicesFileError(`devices[${i}].endpoint must be a string`, path);
+    if (typeof item.endpoint !== "string")
+      throw new DevicesFileError(`devices[${i}].endpoint must be a string`, path);
     for (const key of ["serial", "label", "addedAt"] as const) {
       if (item[key] !== undefined && typeof item[key] !== "string") {
         throw new DevicesFileError(`devices[${i}].${key} must be a string`, path);
@@ -159,7 +174,10 @@ export function parseDevicesFile(text: string, opts: DevicesFileOptions & { path
     try {
       normalizeEndpoint(item.endpoint);
     } catch (err) {
-      throw new DevicesFileError(`devices[${i}]: ${err instanceof Error ? err.message : String(err)}`, path);
+      throw new DevicesFileError(
+        `devices[${i}]: ${err instanceof Error ? err.message : String(err)}`,
+        path,
+      );
     }
     return {
       endpoint: item.endpoint,
@@ -181,7 +199,10 @@ export function loadDevicesFile(path: string, opts: DevicesFileOptions = {}): De
     text = readFileSync(path, "utf8");
   } catch (err) {
     if (isErrno(err) && err.code === "ENOENT") return emptyDevicesFile();
-    throw new DevicesFileError(`cannot read (${err instanceof Error ? err.message : String(err)})`, path);
+    throw new DevicesFileError(
+      `cannot read (${err instanceof Error ? err.message : String(err)})`,
+      path,
+    );
   }
   return parseDevicesFile(text, { ...opts, path });
 }
@@ -278,7 +299,10 @@ export function writeDevicesFile(path: string, file: DevicesFile): void {
     } catch {
       // temp file never got created
     }
-    throw new DevicesFileError(`cannot write (${err instanceof Error ? err.message : String(err)})`, path);
+    throw new DevicesFileError(
+      `cannot write (${err instanceof Error ? err.message : String(err)})`,
+      path,
+    );
   }
 }
 

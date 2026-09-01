@@ -30,9 +30,7 @@ export class RealtimeSessionManager extends EventEmitter {
   private readonly sessions = new Map<string, ManagedSession>();
   private readonly maxConcurrent: number;
   private readonly wsFactory?: WebSocketFactory;
-  private readonly auth:
-    | { mode: "server-key" }
-    | { mode: "temp-token"; ttlSeconds: number };
+  private readonly auth: { mode: "server-key" } | { mode: "temp-token"; ttlSeconds: number };
   /** FIFO of callers waiting for a concurrency slot. */
   private readonly queue: Array<() => void> = [];
   /** Number of callers currently parked in the queue (for observability). */
@@ -72,18 +70,14 @@ export class RealtimeSessionManager extends EventEmitter {
   async open(key: SessionKey, opts: OpenSessionOptions): Promise<RealtimeStream> {
     const mapKey = sessionMapKey(key);
     if (this.sessions.has(mapKey)) {
-      throw new Error(
-        `Session already open for ${key.deviceId}/${key.channelId}.`,
-      );
+      throw new Error(`Session already open for ${key.deviceId}/${key.channelId}.`);
     }
 
     await this.acquireSlot();
 
     // A slot may have been taken by an earlier queued caller while we waited.
     if (this.sessions.has(mapKey)) {
-      throw new Error(
-        `Session already open for ${key.deviceId}/${key.channelId}.`,
-      );
+      throw new Error(`Session already open for ${key.deviceId}/${key.channelId}.`);
     }
 
     const stream = new RealtimeStream(this.config, opts.params, {
@@ -157,11 +151,7 @@ export class RealtimeSessionManager extends EventEmitter {
     await Promise.allSettled(all.map((m) => this.teardown(m, reason, false)));
   }
 
-  private teardown(
-    managed: ManagedSession,
-    reason: string,
-    force: boolean,
-  ): Promise<void> {
+  private teardown(managed: ManagedSession, reason: string, force: boolean): Promise<void> {
     const mapKey = sessionMapKey(managed.key);
     managed.phase = "closing";
     return managed.stream.close({ terminate: true, force }).then(

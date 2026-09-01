@@ -86,30 +86,22 @@ export interface InstallGuideOptions {
  * incantations per package manager; we prefer the most common default for each
  * platform.
  */
-export function installGuideFor(
-  platform: Platform,
-  opts: InstallGuideOptions = {},
-): string {
+export function installGuideFor(platform: Platform, opts: InstallGuideOptions = {}): string {
   const tool = opts.tool ?? "scrcpy";
-  return tool === "adb" ? adbInstallGuideFor(platform, opts) : scrcpyInstallGuideFor(platform, opts);
+  return tool === "adb"
+    ? adbInstallGuideFor(platform, opts)
+    : scrcpyInstallGuideFor(platform, opts);
 }
 
-export function scrcpyInstallGuideFor(
-  platform: Platform,
-  opts: { sudo?: boolean } = {},
-): string {
+export function scrcpyInstallGuideFor(platform: Platform, opts: { sudo?: boolean } = {}): string {
   const sudo = opts.sudo ?? true;
   switch (platform) {
     case "linux": {
-      const lines = [
-        "Install scrcpy (ADB-screen mirroring + audio capture):",
-      ];
+      const lines = ["Install scrcpy (ADB-screen mirroring + audio capture):"];
       lines.push("  Debian/Ubuntu:  sudo apt install scrcpy");
       lines.push("  Fedora:         sudo dnf install scrcpy");
       lines.push("  Arch:           sudo pacman -S scrcpy");
-      lines.push(
-        "  Snap:           snap install scrcpy  (if not in your apt repos)",
-      );
+      lines.push("  Snap:           snap install scrcpy  (if not in your apt repos)");
       lines.push("  Brew (Linux):   brew install scrcpy");
       lines.push("");
       lines.push("Verify:  scrcpy --version");
@@ -153,21 +145,16 @@ export function scrcpyInstallGuideFor(
 
 const ADB_PHONE_SETUP = [
   "",
-  "Then on each phone: Settings → About phone → tap \"Build number\" 7 times,",
-  "Settings → Developer options → enable \"USB debugging\", plug it in (or",
-  "`adb connect <ip>:5555` for Wi-Fi) and accept the \"Allow USB debugging\" prompt.",
+  'Then on each phone: Settings → About phone → tap "Build number" 7 times,',
+  'Settings → Developer options → enable "USB debugging", plug it in (or',
+  '`adb connect <ip>:5555` for Wi-Fi) and accept the "Allow USB debugging" prompt.',
 ];
 
-export function adbInstallGuideFor(
-  platform: Platform,
-  opts: { sudo?: boolean } = {},
-): string {
+export function adbInstallGuideFor(platform: Platform, opts: { sudo?: boolean } = {}): string {
   const sudo = opts.sudo ?? true;
   switch (platform) {
     case "linux": {
-      const lines = [
-        "Install adb (Android platform-tools; needed to see and control phones):",
-      ];
+      const lines = ["Install adb (Android platform-tools; needed to see and control phones):"];
       lines.push("  Debian/Ubuntu:  sudo apt install adb");
       lines.push("  Fedora:         sudo dnf install android-tools");
       lines.push("  Arch:           sudo pacman -S android-tools");
@@ -313,9 +300,7 @@ export function detectAdb(opts: DetectOptions = {}): AdbDetection {
 }
 
 /** Detect every required tool at once, keyed by tool name. */
-export function detectRequiredTools(
-  opts: DetectOptions = {},
-): Record<ToolName, ToolDetection> {
+export function detectRequiredTools(opts: DetectOptions = {}): Record<ToolName, ToolDetection> {
   return {
     adb: detectAdb(opts),
     scrcpy: detectScrcpy(opts),

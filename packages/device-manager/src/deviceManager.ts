@@ -92,7 +92,12 @@ export class DeviceManager extends EventEmitter {
     for (const id of [...this.devices.keys()]) {
       if (!seen.has(id)) {
         const dev = this.devices.get(id)!;
-        this.devices.set(id, { ...dev, adbState: "offline", phase: "offline", updatedAt: Date.now() });
+        this.devices.set(id, {
+          ...dev,
+          adbState: "offline",
+          phase: "offline",
+          updatedAt: Date.now(),
+        });
       }
     }
   }

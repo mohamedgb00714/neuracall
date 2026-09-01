@@ -136,7 +136,10 @@ export class AudioPipeline {
   }
 }
 
-function concat(a: Float32Array<ArrayBufferLike>, b: Float32Array<ArrayBufferLike>): Float32Array<ArrayBufferLike> {
+function concat(
+  a: Float32Array<ArrayBufferLike>,
+  b: Float32Array<ArrayBufferLike>,
+): Float32Array<ArrayBufferLike> {
   if (a.length === 0) return b.slice();
   if (b.length === 0) return a;
   const out = new Float32Array(a.length + b.length);

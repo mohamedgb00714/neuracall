@@ -49,7 +49,12 @@ test("parseDevicesFile accepts the documented shape and normalizes it", () => {
     JSON.stringify({
       version: 1,
       devices: [
-        { endpoint: "192.168.1.20:5555", serial: "ABC", label: "realme", addedAt: "2026-01-01T00:00:00.000Z" },
+        {
+          endpoint: "192.168.1.20:5555",
+          serial: "ABC",
+          label: "realme",
+          addedAt: "2026-01-01T00:00:00.000Z",
+        },
         { endpoint: "192.168.1.21", extra: "ignored" },
       ],
     }),
@@ -57,7 +62,12 @@ test("parseDevicesFile accepts the documented shape and normalizes it", () => {
   );
   assert.equal(file.version, DEVICES_FILE_VERSION);
   assert.deepEqual(file.devices, [
-    { endpoint: "192.168.1.20:5555", serial: "ABC", label: "realme", addedAt: "2026-01-01T00:00:00.000Z" },
+    {
+      endpoint: "192.168.1.20:5555",
+      serial: "ABC",
+      label: "realme",
+      addedAt: "2026-01-01T00:00:00.000Z",
+    },
     { endpoint: "192.168.1.21:5555", addedAt: "2026-08-31T12:00:00.000Z" },
   ]);
   assert.deepEqual(knownEndpoints(file), ["192.168.1.20:5555", "192.168.1.21:5555"]);
@@ -81,9 +91,18 @@ test("parseDevicesFile collapses duplicate endpoints onto the first entry", () =
 test("parseDevicesFile rejects malformed input with a clear error", () => {
   assert.throws(() => parseDevicesFile("{not json"), /not valid JSON/);
   assert.throws(() => parseDevicesFile("[]"), /top level must be an object/);
-  assert.throws(() => parseDevicesFile(JSON.stringify({ version: 2, devices: [] })), /unsupported version 2/);
-  assert.throws(() => parseDevicesFile(JSON.stringify({ version: 1 })), /"devices" must be an array/);
-  assert.throws(() => parseDevicesFile(JSON.stringify({ version: 1, devices: ["x"] })), /devices\[0\] must be an object/);
+  assert.throws(
+    () => parseDevicesFile(JSON.stringify({ version: 2, devices: [] })),
+    /unsupported version 2/,
+  );
+  assert.throws(
+    () => parseDevicesFile(JSON.stringify({ version: 1 })),
+    /"devices" must be an array/,
+  );
+  assert.throws(
+    () => parseDevicesFile(JSON.stringify({ version: 1, devices: ["x"] })),
+    /devices\[0\] must be an object/,
+  );
   assert.throws(
     () => parseDevicesFile(JSON.stringify({ version: 1, devices: [{ endpoint: 5 }] })),
     /devices\[0\]\.endpoint must be a string/,
@@ -123,7 +142,10 @@ test("loadDevicesFile throws DevicesFileError (with path) on a malformed file", 
   const { dir, path } = tmpFile();
   try {
     writeFileSync(path, "{ oops", "utf8");
-    assert.throws(() => loadDevicesFile(path), (e: unknown) => e instanceof DevicesFileError && e.path === path);
+    assert.throws(
+      () => loadDevicesFile(path),
+      (e: unknown) => e instanceof DevicesFileError && e.path === path,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -141,7 +163,12 @@ test("saveDevicesFile writes the documented JSON shape and creates the directory
       version: 1,
       devices: [
         { endpoint: "192.168.1.20:5555", addedAt: "2026-08-31T12:00:00.000Z" },
-        { endpoint: "192.168.1.21:5555", serial: "S2", label: "Pixel", addedAt: "2026-08-31T12:00:00.000Z" },
+        {
+          endpoint: "192.168.1.21:5555",
+          serial: "S2",
+          label: "Pixel",
+          addedAt: "2026-08-31T12:00:00.000Z",
+        },
       ],
     });
     const text = readFileSync(path, "utf8");
@@ -190,7 +217,12 @@ test("saveDevicesFile keeps addedAt/serial/label of re-saved endpoints and drops
       { now: fixedNow },
     );
     assert.deepEqual(next.devices, [
-      { endpoint: "192.168.1.20:5555", serial: "S1", label: "old label", addedAt: "2026-01-01T00:00:00.000Z" },
+      {
+        endpoint: "192.168.1.20:5555",
+        serial: "S1",
+        label: "old label",
+        addedAt: "2026-01-01T00:00:00.000Z",
+      },
       { endpoint: "192.168.1.30:5555", label: "new phone", addedAt: "2026-08-31T12:00:00.000Z" },
     ]);
   } finally {
@@ -224,9 +256,13 @@ test("upsertDevices merges by normalized endpoint and preserves order", () => {
   const base = upsertDevices(emptyDevicesFile(), ["10.0.0.1", "10.0.0.2:5555"], {
     now: () => new Date("2026-01-01T00:00:00.000Z"),
   });
-  const next = upsertDevices(base, [{ endpoint: "10.0.0.1:5555", serial: "S1", label: " " }, "10.0.0.3"], {
-    now: fixedNow,
-  });
+  const next = upsertDevices(
+    base,
+    [{ endpoint: "10.0.0.1:5555", serial: "S1", label: " " }, "10.0.0.3"],
+    {
+      now: fixedNow,
+    },
+  );
   assert.deepEqual(next.devices, [
     { endpoint: "10.0.0.1:5555", serial: "S1", addedAt: "2026-01-01T00:00:00.000Z" },
     { endpoint: "10.0.0.2:5555", addedAt: "2026-01-01T00:00:00.000Z" },

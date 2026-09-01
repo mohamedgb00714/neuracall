@@ -25,8 +25,7 @@ function stubRunner(queue: string[][]): CommandRunner {
     },
     async runForDevice(endpoint, args) {
       const out = queue[i++];
-      if (out === undefined)
-        throw new Error(`unexpected adb -s ${endpoint} ${args.join(" ")}`);
+      if (out === undefined) throw new Error(`unexpected adb -s ${endpoint} ${args.join(" ")}`);
       return out.join("\n");
     },
   };
@@ -135,24 +134,13 @@ test("device-manager reports channel=whatsapp and phase=incoming before answer",
 
   // Now a WhatsApp call arrives; the orchestrator detects before auto-answer.
   const detector = new AdbCallChannelDetector(
-    stubRunner([
-      TEL_IDLE,
-      AUDIO_IDLE,
-      WA_FOREGROUND,
-      NO_CALL_DUMP,
-      WA_DUMP,
-    ]),
+    stubRunner([TEL_IDLE, AUDIO_IDLE, WA_FOREGROUND, NO_CALL_DUMP, WA_DUMP]),
   );
 
   const incomingEvents: Array<{ id: string; channel: string }> = [];
-  dm.on("incoming", (id: string, channel: string) =>
-    incomingEvents.push({ id, channel }),
-  );
+  dm.on("incoming", (id: string, channel: string) => incomingEvents.push({ id, channel }));
 
-  const det: DetectedIncomingCall = await dm.detectIncomingCall(
-    "emulator-5554",
-    detector,
-  );
+  const det: DetectedIncomingCall = await dm.detectIncomingCall("emulator-5554", detector);
   assert.equal(det.present, true);
   assert.equal(det.channel, "whatsapp");
 
@@ -180,10 +168,7 @@ test("isWhatsAppPackage and hasIncomingCallUi helpers", () => {
 test("detectIncomingCall throws for an unknown device", async () => {
   const dm = new DeviceManager({ runner: stubRunner([]) });
   const detector = new AdbCallChannelDetector(stubRunner([TEL_IDLE]));
-  await assert.rejects(
-    () => dm.detectIncomingCall("nope", detector),
-    /Unknown device/,
-  );
+  await assert.rejects(() => dm.detectIncomingCall("nope", detector), /Unknown device/);
 });
 
 // Real output from the realme RMX3624 (Android 13) this was developed against.
@@ -208,9 +193,7 @@ test("foreground package is found across the known dumpsys field names", () => {
     "com.android.dialer",
   );
   assert.equal(
-    parseForegroundPackage(
-      "  topResumedActivity=ActivityRecord{abc u0 com.whatsapp/.Main t42}",
-    ),
+    parseForegroundPackage("  topResumedActivity=ActivityRecord{abc u0 com.whatsapp/.Main t42}"),
     "com.whatsapp",
   );
   assert.equal(parseForegroundPackage("nothing useful here"), "");
@@ -267,9 +250,11 @@ test("audio mode falls back to the last setMode entry when no mode field exists"
 });
 
 test("a cellular call's audio mode is not mistaken for VoIP", () => {
-  const dump = ["Mode dump:", "- Current mode = MODE_IN_CALL", "- Mode owner: pid=1421 uid=1001"].join(
-    "\n",
-  );
+  const dump = [
+    "Mode dump:",
+    "- Current mode = MODE_IN_CALL",
+    "- Mode owner: pid=1421 uid=1001",
+  ].join("\n");
   assert.equal(parseAudioMode(dump), "in_call");
   assert.equal(isVoipCallActive(dump), false);
   assert.equal(parseAudioModeOwner(dump), "");
@@ -346,7 +331,9 @@ test("an off-hook cellular call is staged in-progress", async () => {
 // --- any calling app, not just WhatsApp -------------------------------------
 
 function audioInCommunication(pkg: string): string[] {
-  return [`setMode(MODE_IN_COMMUNICATION) from package=${pkg} pid=1 selected mode=MODE_IN_COMMUNICATION by pid=1`];
+  return [
+    `setMode(MODE_IN_COMMUNICATION) from package=${pkg} pid=1 selected mode=MODE_IN_COMMUNICATION by pid=1`,
+  ];
 }
 const IDLE_AUDIO_DUMP = ["- mode (internal) = NORMAL", "Mode owner: "];
 const NO_ACTIVITY = ["(this OEM has no mResumedActivity)"];

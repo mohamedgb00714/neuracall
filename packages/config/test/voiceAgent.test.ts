@@ -194,8 +194,5 @@ test("getConfig gives voiceAgent the same region as assemblyai", () => {
 });
 
 test("an invalid region rejects before any agent endpoint is built", () => {
-  assert.throws(
-    () => config({ ASSEMBLYAI_REGION: "mars" }),
-    /Invalid ASSEMBLYAI_REGION="mars"/,
-  );
+  assert.throws(() => config({ ASSEMBLYAI_REGION: "mars" }), /Invalid ASSEMBLYAI_REGION="mars"/);
 });

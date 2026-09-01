@@ -58,7 +58,9 @@ function createWindow() {
 }
 
 /** Wrap an IPC action so failures reach the renderer as data, not as opaque IPC errors. */
-async function attempt(fn: () => Promise<unknown> | unknown): Promise<{ ok: boolean; error?: string }> {
+async function attempt(
+  fn: () => Promise<unknown> | unknown,
+): Promise<{ ok: boolean; error?: string }> {
   try {
     await fn();
     return { ok: true };
@@ -162,9 +164,7 @@ function registerIpc() {
 
   ipcMain.handle("devices:list", () => runtime?.devicesList ?? []);
 
-  ipcMain.handle("devices:reconnect", () =>
-    attempt(() => requireRuntime().reconnectKnown()),
-  );
+  ipcMain.handle("devices:reconnect", () => attempt(() => requireRuntime().reconnectKnown()));
 
   // ---- external tool checks (work even when the runtime failed to start)
   ipcMain.handle("tools:check", () => runtime?.toolStatus() ?? detectRequiredTools());
@@ -188,7 +188,11 @@ function registerIpc() {
     try {
       return { ok: true, state: await requireRuntime().callState(deviceId) };
     } catch (err) {
-      return { ok: false, state: "unknown", error: err instanceof Error ? err.message : String(err) };
+      return {
+        ok: false,
+        state: "unknown",
+        error: err instanceof Error ? err.message : String(err),
+      };
     }
   });
 
@@ -324,9 +328,7 @@ function wireRuntimeEvents(rt: Runtime) {
   rt.on("autopilot-state", (callId, state, reason) =>
     send("autopilot:state", { callId, state, reason }),
   );
-  rt.on("autopilot-transcript", (callId, entry) =>
-    send("autopilot:transcript", { callId, entry }),
-  );
+  rt.on("autopilot-transcript", (callId, entry) => send("autopilot:transcript", { callId, entry }));
   rt.on("autopilot-error", (message, callId) => {
     send("autopilot:error", { message, callId });
     console.warn(`[autopilot${callId ? ` ${callId}` : ""}] ${message}`);

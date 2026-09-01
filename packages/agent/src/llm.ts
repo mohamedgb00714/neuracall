@@ -74,9 +74,7 @@ export class OpenAiCompatibleLlmClient implements LlmClient {
     // interrupting must still win — so combine the deadline with the caller's
     // own signal rather than replacing it.
     const timeout = AbortSignal.timeout(timeoutMs);
-    const signal = request.signal
-      ? AbortSignal.any([request.signal, timeout])
-      : timeout;
+    const signal = request.signal ? AbortSignal.any([request.signal, timeout]) : timeout;
 
     const response = await this.fetchFn(`${baseUrl}/chat/completions`, {
       method: "POST",

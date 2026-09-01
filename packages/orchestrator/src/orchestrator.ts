@@ -62,10 +62,7 @@ export interface DevicePool {
  */
 export interface SttStream {
   sendAudio(chunk: Uint8Array): boolean;
-  updateConfiguration(update: {
-    agent_context?: string;
-    keyterms_prompt?: string[];
-  }): void;
+  updateConfiguration(update: { agent_context?: string; keyterms_prompt?: string[] }): void;
   on(event: "turn", listener: (turn: TurnEvent) => void): unknown;
   on(event: "error", listener: (err: Error) => void): unknown;
   on(event: "close", listener: () => void): unknown;
@@ -198,9 +195,8 @@ export class Orchestrator extends EventEmitter {
    */
   acquireDevice(): Device | null {
     return (
-      this.opts.devices.snapshot.find(
-        (d) => d.adbState === "device" && d.phase === "online",
-      ) ?? null
+      this.opts.devices.snapshot.find((d) => d.adbState === "device" && d.phase === "online") ??
+      null
     );
   }
 
@@ -299,7 +295,11 @@ export class Orchestrator extends EventEmitter {
 
     machine.on("transition", (t: { to: CallState; reason?: string }) => {
       record.state = t.to;
-      record.states.push({ state: t.to, at: this.now(), ...(t.reason ? { reason: t.reason } : {}) });
+      record.states.push({
+        state: t.to,
+        at: this.now(),
+        ...(t.reason ? { reason: t.reason } : {}),
+      });
       this.emit("state", callId, t.to, t.reason);
     });
 
@@ -654,7 +654,11 @@ export class Orchestrator extends EventEmitter {
       await fn();
     } catch (err) {
       const error = toError(err);
-      this.emit("error", new Error(`${what} failed: ${error.message}`, { cause: error }), active.record.callId);
+      this.emit(
+        "error",
+        new Error(`${what} failed: ${error.message}`, { cause: error }),
+        active.record.callId,
+      );
     }
   }
 

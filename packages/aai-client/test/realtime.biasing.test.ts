@@ -49,8 +49,5 @@ test("updateConfiguration can push just an agent_context mid-session", async () 
 test("updateConfiguration is rejected when the stream is not open", () => {
   const server = new MockA2I();
   const stream = openStream(server);
-  assert.throws(
-    () => stream.updateConfiguration({ agent_context: "hi" }),
-    /not open/,
-  );
+  assert.throws(() => stream.updateConfiguration({ agent_context: "hi" }), /not open/);
 });

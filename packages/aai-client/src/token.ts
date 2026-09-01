@@ -10,10 +10,7 @@ const TOKEN_MAX_SECONDS = 600;
  * @param expiresInSeconds How long the token can be redeemed for (1-600).
  * @returns The opaque token string.
  */
-export async function mintRealtimeToken(
-  config: AppConfig,
-  expiresInSeconds = 60,
-): Promise<string> {
+export async function mintRealtimeToken(config: AppConfig, expiresInSeconds = 60): Promise<string> {
   const seconds = clampInt(expiresInSeconds, 1, TOKEN_MAX_SECONDS, 60);
   const host = realtimeTokenHost(config.assemblyai.realtimeHost);
 
@@ -24,9 +21,7 @@ export async function mintRealtimeToken(
 
   if (!res.ok) {
     const body = await safeText(res);
-    throw new Error(
-      `Failed to mint realtime token (HTTP ${res.status}): ${body}`,
-    );
+    throw new Error(`Failed to mint realtime token (HTTP ${res.status}): ${body}`);
   }
 
   const data = (await res.json()) as { token?: string };

@@ -146,8 +146,7 @@ export function DevicePanel() {
   };
   const answer = (id: string) =>
     void runCall(id, "Answered", () => window.neuracall.answerCall(id));
-  const hangUp = (id: string) =>
-    void runCall(id, "Hung up", () => window.neuracall.hangUpCall(id));
+  const hangUp = (id: string) => void runCall(id, "Hung up", () => window.neuracall.hangUpCall(id));
 
   const online = devices.filter((d) => d.adbState === "device");
   const offline = devices.filter((d) => d.adbState !== "device");
@@ -157,8 +156,8 @@ export function DevicePanel() {
       <div className="device-panel">
         <h2>Devices</h2>
         <p className="empty">
-          No phones detected. Connect a phone via ADB (USB or Wi-Fi) — it will
-          appear here automatically.
+          No phones detected. Connect a phone via ADB (USB or Wi-Fi) — it will appear here
+          automatically.
         </p>
       </div>
     );

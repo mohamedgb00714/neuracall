@@ -2,15 +2,15 @@
 
 How NeuraCall knows a WhatsApp call is happening on a phone, why the detector
 looks in four different places to find out, and what it still cannot do
-(spoiler: it cannot *place* one). Everything here is implemented in
+(spoiler: it cannot _place_ one). Everything here is implemented in
 `packages/device-manager/src/whatsAppDetector.ts` and covered by
 `packages/device-manager/test/whatsAppDetector.test.ts`.
 
 ## Supported packages
 
-| Package | App | Notes |
-| --- | --- | --- |
-| `com.whatsapp` | WhatsApp (consumer) | `WHATSAPP_APP_ID` |
+| Package            | App                   | Notes                                                                                                                              |
+| ------------------ | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `com.whatsapp`     | WhatsApp (consumer)   | `WHATSAPP_APP_ID`                                                                                                                  |
 | `com.whatsapp.w4b` | **WhatsApp Business** | `WHATSAPP_BUSINESS_APP_ID`. This is what the realme RMX3624 test device carries, and it is the build most businesses actually run. |
 
 `isWhatsAppPackage()` accepts either, plus anything else under the
@@ -25,12 +25,12 @@ status-saver in the foreground is not an inbound call.
 signal first, and stops at the first answer. Everything is plain `adb shell`;
 no scrcpy session and no APK on the device.
 
-| # | Signal | Command | What it settles |
-| --- | --- | --- | --- |
-| 1 | Telephony registry | `dumpsys telephony.registry` | Authoritative for **cellular**. `mCallState` 1 = ringing, 2 = off-hook. WhatsApp calls never appear here — they are not telephony. |
-| 2 | Audio mode | `dumpsys audio` | `MODE_IN_COMMUNICATION` owned by a WhatsApp package = a WhatsApp call **is up**. |
-| 3 | Foreground package | `dumpsys activity activities`, then `dumpsys window` | Is WhatsApp the app on screen? Also decides whether step 4 is worth its cost. |
-| 4 | On-screen text | `uiautomator dump` + `cat` | Distinguishes **ringing** from already-connected. Only a ringing call may be auto-answered. |
+| #   | Signal             | Command                                              | What it settles                                                                                                                    |
+| --- | ------------------ | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Telephony registry | `dumpsys telephony.registry`                         | Authoritative for **cellular**. `mCallState` 1 = ringing, 2 = off-hook. WhatsApp calls never appear here — they are not telephony. |
+| 2   | Audio mode         | `dumpsys audio`                                      | `MODE_IN_COMMUNICATION` owned by a WhatsApp package = a WhatsApp call **is up**.                                                   |
+| 3   | Foreground package | `dumpsys activity activities`, then `dumpsys window` | Is WhatsApp the app on screen? Also decides whether step 4 is worth its cost.                                                      |
+| 4   | On-screen text     | `uiautomator dump` + `cat`                           | Distinguishes **ringing** from already-connected. Only a ringing call may be auto-answered.                                        |
 
 The result keeps the contract the orchestrator already depends on —
 `present` and `channel` mean exactly what they meant before — and adds two
@@ -46,7 +46,7 @@ optional fields alongside it:
   one. Absent for cellular, which has no owning app.
 
 Callers that ignore both behave exactly as they did — with one consequence worth
-stating: a call that is *already connected* now sets `present: true` where it
+stating: a call that is _already connected_ now sets `present: true` where it
 used to report nothing, and `DeviceManager.detectIncomingCall()` will move such
 a device to phase `incoming`. An orchestrator that auto-answers should branch on
 `stage === "ringing"` rather than on `present` alone.
@@ -57,7 +57,7 @@ The UI scrape (step 4) matches strings like `Incoming voice call`, `Accept`,
 `Decline`, `is calling`. That is fragile twice over: it breaks on a phone set
 to French, Arabic or anything else, and it breaks again whenever WhatsApp
 reshuffles its call screen. It is kept only because it is the one signal that
-can tell *ringing* from *connected*.
+can tell _ringing_ from _connected_.
 
 `dumpsys audio` depends on neither. A live WhatsApp call puts the device in
 `MODE_IN_COMMUNICATION` with the calling package as mode owner, in English, on
@@ -77,7 +77,7 @@ Mode dump:
   every ordinary phone call as WhatsApp.
 - **The mode gates the owner, not the reverse.** `dumpsys audio` keeps a
   `setMode(...)` history, so an idle phone still names `com.whatsapp.w4b` as
-  the last app to have held the mode. A call is only reported when the *current*
+  the last app to have held the mode. A call is only reported when the _current_
   mode is `MODE_IN_COMMUNICATION`.
 
 The field names vary (`Audio mode:`, `- Current mode =`, a bare
@@ -147,20 +147,20 @@ touch the contacts provider.
 
 ## What NeuraCall can and cannot do with WhatsApp
 
-| | State |
-| --- | --- |
-| Detect an inbound WhatsApp call, ringing | **Works** — foreground package + call-screen text |
-| Detect a WhatsApp call already in progress | **Works** — `dumpsys audio` mode owner |
-| Tell WhatsApp from cellular | **Works** — telephony registry is checked first and wins |
-| Tell WhatsApp Business from consumer WhatsApp | **Works** — reported as `ownerPackage` |
-| Answer an inbound WhatsApp call | **Works** — `KEYCODE_CALL`, the same key press as cellular; WhatsApp registers its calls with telecom, so the key reaches it |
-| Hang up | **Works** — `KEYCODE_ENDCALL` |
-| **Place an outbound WhatsApp call** | **Not implemented** — see below |
+|                                               | State                                                                                                                        |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Detect an inbound WhatsApp call, ringing      | **Works** — foreground package + call-screen text                                                                            |
+| Detect a WhatsApp call already in progress    | **Works** — `dumpsys audio` mode owner                                                                                       |
+| Tell WhatsApp from cellular                   | **Works** — telephony registry is checked first and wins                                                                     |
+| Tell WhatsApp Business from consumer WhatsApp | **Works** — reported as `ownerPackage`                                                                                       |
+| Answer an inbound WhatsApp call               | **Works** — `KEYCODE_CALL`, the same key press as cellular; WhatsApp registers its calls with telecom, so the key reaches it |
+| Hang up                                       | **Works** — `KEYCODE_ENDCALL`                                                                                                |
+| **Place an outbound WhatsApp call**           | **Not implemented** — see below                                                                                              |
 
 ### Placing a call is not implemented, and it is not a missing function call
 
 WhatsApp publishes no intent for starting a call. `https://wa.me/<number>` and
-`whatsapp://send?phone=` open a *chat*, not a call; there is no documented,
+`whatsapp://send?phone=` open a _chat_, not a call; there is no documented,
 supported URI that dials. The two routes that exist in practice are both
 awkward:
 
@@ -171,7 +171,7 @@ awkward:
    device (see above). It also breaks whenever WhatsApp changes its MIME types.
 2. **UI automation.** Drive the app with `input tap` / `uiautomator` through
    search → contact → call button. Locale-dependent, layout-dependent, and
-   exactly the kind of scraping this detector is trying to move *away* from.
+   exactly the kind of scraping this detector is trying to move _away_ from.
 
 Neither is in the codebase. An operator who needs outbound WhatsApp today has
 to, in order:
@@ -207,5 +207,5 @@ adb -s <serial> shell dumpsys window | grep -iE 'mFocusedApp'
 adb -s <serial> shell dumpsys package com.whatsapp.w4b | grep -i READ_CONTACTS
 ```
 
-Step 2 during a call that the phone is *not* on will print the historical
+Step 2 during a call that the phone is _not_ on will print the historical
 `setMode` lines; read `Current mode`, not the log.

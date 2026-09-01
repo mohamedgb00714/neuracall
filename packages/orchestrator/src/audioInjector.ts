@@ -110,7 +110,8 @@ export class CommandAudioInjector implements AudioInjector {
     this.sampleRate = opts.sampleRate ?? 16000;
     this.channels = opts.channels ?? 1;
     this.sink = opts.sink;
-    this.spawnFn = opts.spawnFn ?? ((cmd, args) => spawn(cmd, args, { stdio: ["pipe", "ignore", "pipe"] }));
+    this.spawnFn =
+      opts.spawnFn ?? ((cmd, args) => spawn(cmd, args, { stdio: ["pipe", "ignore", "pipe"] }));
     this.onError = opts.onError;
   }
 

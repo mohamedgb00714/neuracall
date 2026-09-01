@@ -64,7 +64,11 @@ export const CALLING_APPS: readonly CallingApp[] = [
     label: "Google Meet",
     packages: ["com.google.android.apps.tachyon", "com.google.android.apps.meetings"],
   },
-  { channel: "imo", label: "imo", packages: ["com.imo.android.imoim", "com.imo.android.imoimbeta"] },
+  {
+    channel: "imo",
+    label: "imo",
+    packages: ["com.imo.android.imoim", "com.imo.android.imoimbeta"],
+  },
   { channel: "botim", label: "BOTIM", packages: ["im.thebot.messenger"] },
   { channel: "discord", label: "Discord", packages: ["com.discord"] },
   { channel: "line", label: "LINE", packages: ["jp.naver.line.android"] },

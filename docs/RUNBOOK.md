@@ -7,7 +7,7 @@ to.
 
 Before you plan a deployment around this, read the honest capability table in
 the [README](../README.md) — the agent listens, transcribes, thinks and
-records, but making the caller *hear* it still needs an audio-injection
+records, but making the caller _hear_ it still needs an audio-injection
 transport you set up yourself ([AUDIO-ABI.md](AUDIO-ABI.md)).
 
 **Contents**
@@ -25,14 +25,14 @@ transport you set up yourself ([AUDIO-ABI.md](AUDIO-ABI.md)).
 
 ## 1. Prerequisites
 
-| Requirement | Version | Why |
-| --- | --- | --- |
-| Node.js | **>= 20** (`engines`) | Electron 31 bundles Node 20.18 for the main process. Do not use newer APIs in `apps/desktop/electron/**` or in anything it imports. |
-| npm | 10+ | The repo is npm workspaces; `npm install` at the root installs everything. |
-| `adb` | Android platform-tools | Device discovery, call control, WhatsApp detection. Must be on `PATH` (or set `ADB=/path/to/adb` for the shell scripts). |
-| `scrcpy` | **>= 3.x** — verified on 3.3.4 | Audio capture. The `voice-call*` and `mic-*` sources need the 3.1+ line; older 1.x/2.x builds from distro repos will not work. |
-| AssemblyAI key | – | <https://www.assemblyai.com/dashboard/api-keys>. Raw key, no `Bearer` prefix. |
-| Android phone | 11+ recommended | scrcpy audio forwarding needs Android 11+. Developed against a realme RMX3624 on Android 13. |
+| Requirement    | Version                        | Why                                                                                                                                 |
+| -------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Node.js        | **>= 20** (`engines`)          | Electron 31 bundles Node 20.18 for the main process. Do not use newer APIs in `apps/desktop/electron/**` or in anything it imports. |
+| npm            | 10+                            | The repo is npm workspaces; `npm install` at the root installs everything.                                                          |
+| `adb`          | Android platform-tools         | Device discovery, call control, WhatsApp detection. Must be on `PATH` (or set `ADB=/path/to/adb` for the shell scripts).            |
+| `scrcpy`       | **>= 3.x** — verified on 3.3.4 | Audio capture. The `voice-call*` and `mic-*` sources need the 3.1+ line; older 1.x/2.x builds from distro repos will not work.      |
+| AssemblyAI key | –                              | <https://www.assemblyai.com/dashboard/api-keys>. Raw key, no `Bearer` prefix.                                                       |
+| Android phone  | 11+ recommended                | scrcpy audio forwarding needs Android 11+. Developed against a realme RMX3624 on Android 13.                                        |
 
 For **injection** (the agent's voice reaching the caller) you additionally need
 one of: a working BlueZ/HFP stack and a phone paired to the host as a hands-free
@@ -103,7 +103,7 @@ Do this once per phone.
 4. Confirm: `adb devices` lists the serial with state `device`.
 
 **The OEM trap.** On realme / OPPO ColorOS, Xiaomi MIUI and several others,
-`adb shell input keyevent` is silently blocked until an *extra* developer
+`adb shell input keyevent` is silently blocked until an _extra_ developer
 switch is on. Look for **"USB debugging (Security settings)"** or **"Disable
 permission monitoring"** in Developer options; the name varies. Without it adb
 sees the phone perfectly and **Answer / Hang up do nothing at all** — no error,
@@ -120,14 +120,14 @@ id (find it with `lsusb`).
 1. **Developer options → Wireless debugging** → **Pair device with pairing
    code**.
 2. `adb pair <ip>:<pairing-port>` and type the code.
-3. `adb connect <ip>:<connect-port>` — note this is a *different* port from the
+3. `adb connect <ip>:<connect-port>` — note this is a _different_ port from the
    pairing one, shown on the main Wireless debugging screen.
 
 **No screen lock.** Placing a call through a messaging app is UI automation, and
 UI automation does nothing on a phone behind a keyguard: taps land on the lock
 screen, `uiautomator dump` describes the lock screen, and the call is simply
 never placed — with no error anywhere. NeuraCall wakes the phone and dismisses an
-*insecure* keyguard itself, but a PIN, pattern or password cannot be cleared by
+_insecure_ keyguard itself, but a PIN, pattern or password cannot be cleared by
 adb without the credential, so it reports that instead of pretending. Remove the
 screen lock on any handset NeuraCall drives.
 
@@ -148,7 +148,7 @@ bluetoothctl show | grep -E 'Powered|UUID: Handsfree'
 ```
 
 You need `Powered: yes` and a **`UUID: Handsfree`** line. That UUID is the HF
-role; without it the adapter can only be an audio *sink* (A2DP), which carries
+role; without it the adapter can only be an audio _sink_ (A2DP), which carries
 music from the phone but has no microphone path and so cannot carry a call.
 On PipeWire this comes from the `libspa-0.2-bluetooth` package.
 
@@ -169,7 +169,7 @@ On the phone, in the paired device's settings, make sure **Phone calls** (or
 only, which looks connected and still routes call audio to the earpiece.
 
 With a call in progress the host should show a Bluetooth source and sink; point
-`NEURACALL_INJECT_SINK` at the sink. If the sink only appears *during* a call,
+`NEURACALL_INJECT_SINK` at the sink. If the sink only appears _during_ a call,
 that is normal: the SCO link is set up per call, not held open.
 
 ## 4. Startup order
@@ -264,7 +264,7 @@ npm run typecheck
 npm run lint
 ```
 
-`npm run test:e2e` is the honest smoke test of the *logic*: real
+`npm run test:e2e` is the honest smoke test of the _logic_: real
 DeviceManager, AndroidCallController, AdbCallChannelDetector,
 RealtimeSessionManager, RealtimeStream, CallAudioSession, AudioPipeline,
 EnergyVad, CallRecorder, Orchestrator, CallStateMachine and LlmCallAgent, with
@@ -328,7 +328,7 @@ empty transcript means audio flowed but nothing intelligible reached the
 server.
 
 Note the default: `--source=mic` captures the phone's own microphone, i.e.
-*your* side of a call plus the room. To transcribe the far end you need either
+_your_ side of a call plus the room. To transcribe the far end you need either
 a privileged source (`--source=voice-call-downlink`, frequently denied by the
 OEM) or the call on speakerphone so the caller's voice reaches the mic. This
 script pins whatever source you name; it does **not** walk the fallback chain
@@ -344,7 +344,7 @@ Launch it (section 4) and check, in order:
 3. **Devices** lists every phone with state `device`.
 4. **Answer / Hang up** actually work on a ringing call (the OEM trap in
    section 3).
-5. **Listen** on a phone/channel opens a session, shows the *capturing* badge,
+5. **Listen** on a phone/channel opens a session, shows the _capturing_ badge,
    and produces partial then final turns as you speak.
 
 Known app limitations worth knowing before you report a bug: the
@@ -359,7 +359,7 @@ has nowhere to go.
 
 Answers the speech half of "the caller cannot hear the agent" without involving
 a phone at all. It uses the product's own client against the real service, and
-because the host usually has no local TTS, it has a throwaway agent *speak* the
+because the host usually has no local TTS, it has a throwaway agent _speak_ the
 caller's line and streams that back in as if it were a caller.
 
 ```bash
@@ -372,7 +372,7 @@ network problem, not a phone problem.
 
 Two numbers it reports are easy to confuse. The generation figure (~10 ms) is
 the model plus synthesis, measured from the moment the service declares the turn
-over. What a caller *perceives* is that plus the end-of-turn silence window —
+over. What a caller _perceives_ is that plus the end-of-turn silence window —
 about 1.5 s on the defaults. Lowering the window trades that latency against
 cutting off callers who pause mid-sentence.
 
@@ -385,7 +385,7 @@ network ways.
   up as gaps and garbled words in the transcript — which reads like an STT
   problem and is not one. Where audio quality matters most, use USB.
 - **Give every phone a static IP or a DHCP reservation.** A wireless adb
-  endpoint *is* `ip:port`. When the lease moves, `devices.json` points at
+  endpoint _is_ `ip:port`. When the lease moves, `devices.json` points at
   nothing and every reconnect fails. This is the single most common cause of a
   fleet that "worked yesterday".
 - **`adb tcpip` does not survive a phone reboot.** The phone stops listening on
@@ -401,35 +401,35 @@ network ways.
   off on the AP. Guest networks block device-to-device traffic and adb connect
   will simply time out.
 - **Don't mirror video.** Capture is audio-only (`--no-video --no-window
-  --no-playback`) for a reason; running scrcpy's video mirroring at the same
+--no-playback`) for a reason; running scrcpy's video mirroring at the same
   time competes for the same wireless budget.
 
 ## 7. Troubleshooting by symptom
 
 Keyed by what you actually see, not by what is broken.
 
-| Symptom | Likely cause | Do this |
-| --- | --- | --- |
-| **No window opens**; terminal shows a Node stack trace mentioning `app` or `whenReady` | `ELECTRON_RUN_AS_NODE=1` is exported (VS Code terminal) | `env -u ELECTRON_RUN_AS_NODE npx electron .` from `apps/desktop`. Check with `echo ${ELECTRON_RUN_AS_NODE:-unset}`. |
-| **Status bar: "Config error — check .env"** | `ASSEMBLYAI_API_KEY` missing, blank, or still `replace-me`; or `ASSEMBLYAI_REGION` is not `us`/`eu`/`edge`; or the key has a `Bearer ` prefix or whitespace | Exact message is on the terminal as `[neuracall] runtime not started: …`. The app looks for `.env` in the cwd, then `apps/desktop/`, then the repo root, then Electron's userData dir. |
-| **`adb devices` lists nothing** | Cable, USB mode, or a stale adb server | Choose "File transfer" rather than "Charging only" on the phone. `adb kill-server && adb devices`. Try another cable — charge-only cables are common. |
-| **Device shows `unauthorized`** | The RSA prompt was never accepted | Unlock the phone, replug, accept **"Allow USB debugging?"**, tick "Always allow". If no prompt appears: Developer options → **Revoke USB debugging authorisations**, then replug. |
-| **Device shows `offline`** | Stale transport, bad hub, or the phone rebooted after `adb tcpip` | `adb kill-server`; for wireless, `./scripts/adbtool.sh reconnect --all`; if it was a reboot, re-run `./scripts/adb-setup.sh` over USB. |
-| **Device shows `no permissions`** (Linux) | Missing udev rule | Add a rule for the vendor id from `lsusb`, then `sudo udevadm control --reload && adb kill-server`. |
-| **Phone is `device` but Answer / Hang up / Call do nothing** | The OEM blocks input injection over adb | Enable "USB debugging (Security settings)" / "Disable permission monitoring" in Developer options. Confirm with `adb -s <id> shell input keyevent 5` on a ringing call. |
-| **Capture is silent — `raw capture: 0 bytes`, or the *capturing* badge is on with no audio** | The chosen `--audio-source` is unavailable or silently denied on this ROM | Walk the chain by hand, best first: `voice-call-downlink` → `voice-call` → `output` → `mic`. Test outside NeuraCall: `scrcpy -s <id> --no-video --audio-source=voice-call` and listen. A denied privileged source often *starts* and then produces nothing forever rather than erroring — that is why `ScrcpyAudioCapture` has a start timeout. Also check scrcpy is 3.x and the phone is Android 11+. |
-| **Audio flows but the transcript stays empty** | Usually one of three things | (1) You are capturing the wrong side: `mic` picks up *your* end, not the caller's — put the call on speakerphone or use a `voice-call*` source. (2) VAD is gating the silence out: `emitSilence` must stay **true**. AssemblyAI ends a turn from how much silence it received, so stripping pauses compresses the timeline into one unbroken utterance, turns never finalize, and the call goes quiet while transcription looks healthy. Both production paths set it to `true`, but the bare `AudioPipeline` default is `false` — so this bites anyone wiring their own pipeline. (3) Nobody was actually speaking. |
-| **Choppy audio, dropped words** | Wireless jitter | Move to 5 GHz or use USB; stop any video mirroring. See section 6. |
-| **Close 1008** | Missing/invalid token, an account problem, or a new-session rate limit | **Do not retry in a loop** — it is a configuration error, and hammering turns a typo into a stream of rejected auth attempts. Check the key is the raw key with no `Bearer ` prefix and that the region matches the account. DECISIONS.md §4/§6. |
-| **Close 3007** | A chunk outside the 50–1000 ms window, or audio sent faster than real time | The built-in capture sends 100 ms chunks paced by capture, so this means something is feeding a file without pacing it. The policy is to halve the chunk size and reconnect — never crash. |
-| **Close 3009** | Too many concurrent sessions for the account | The session manager bounds concurrency and queues FIFO rather than racing into a rejection, but your *account* limit may be lower than the local bound. Stop unused sessions. |
-| **Close 3008** | The 3-hour session cap, or a temp token's max duration | Expected on very long calls. Open a fresh session. |
-| **A session still seems to be billing after a crash** | The socket was dropped without `Terminate` | Billing is **wall-clock connection time**, not audio duration. Normal exits always Terminate — Stop, window close, app quit, and every orchestrator teardown path. A `SIGKILL`ed process cannot, so the session runs to AssemblyAI's inactivity timeout or the 3-hour cap. Prefer closing the window; check the dashboard if you killed it hard. |
-| **The caller cannot hear the agent** | Either nothing is generating speech, or there is no transport carrying it to the call — two separate causes that look identical | Check which. Speech: with the Voice Agent on (Settings → Voice Agent) AssemblyAI supplies the reply *and* the voice on the key you already have, so no LLM or TTS credential is needed; on the composed path a missing `LLM_API_KEY` or TTS provider leaves `SilentTts` in place. Transport: injection still needs Bluetooth HFP (section 3a), an on-device helper app, or acoustic coupling. `node scripts/live-voice-agent.mjs` proves the speech half without a phone. See [VOICE-AGENT.md](VOICE-AGENT.md) and [AUDIO-ABI.md](AUDIO-ABI.md). |
-| **The agent answers its own last sentence** | A duplex capture source (`voice-call`, `mic`, `output`) is feeding the agent's own voice back into STT | Move to `voice-call-downlink` if the phone allows it. Otherwise gate `remoteIn` while `localOut.isSpeaking`, or lean on `agent_context` biasing plus barge-in to discard turns that echo what the agent just said. |
-| **`npm run typecheck` fails in `apps/desktop` after editing a package** | Consumers resolve packages through their built `dist/` | `npm run build -w @neuracall/<pkg>` (or `npm run build`) first. |
-| **scrcpy `ERROR` / `WARN` lines in the app log** | Forwarded verbatim from scrcpy | `Audio capture failed` / `Could not configure audio` → the source is unsupported here; try the next one. `device disconnected` → the adb transport dropped; see the wireless notes. |
-| **Windows: higher latency, temp files under `%TEMP%`** | Expected | Windows has no `mkfifo`, so the bridge records to a temp `.wav` and tail-reads it every 100 ms, deleting it on exit. |
+| Symptom                                                                                      | Likely cause                                                                                                                                                | Do this                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **No window opens**; terminal shows a Node stack trace mentioning `app` or `whenReady`       | `ELECTRON_RUN_AS_NODE=1` is exported (VS Code terminal)                                                                                                     | `env -u ELECTRON_RUN_AS_NODE npx electron .` from `apps/desktop`. Check with `echo ${ELECTRON_RUN_AS_NODE:-unset}`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Status bar: "Config error — check .env"**                                                  | `ASSEMBLYAI_API_KEY` missing, blank, or still `replace-me`; or `ASSEMBLYAI_REGION` is not `us`/`eu`/`edge`; or the key has a `Bearer ` prefix or whitespace | Exact message is on the terminal as `[neuracall] runtime not started: …`. The app looks for `.env` in the cwd, then `apps/desktop/`, then the repo root, then Electron's userData dir.                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **`adb devices` lists nothing**                                                              | Cable, USB mode, or a stale adb server                                                                                                                      | Choose "File transfer" rather than "Charging only" on the phone. `adb kill-server && adb devices`. Try another cable — charge-only cables are common.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Device shows `unauthorized`**                                                              | The RSA prompt was never accepted                                                                                                                           | Unlock the phone, replug, accept **"Allow USB debugging?"**, tick "Always allow". If no prompt appears: Developer options → **Revoke USB debugging authorisations**, then replug.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Device shows `offline`**                                                                   | Stale transport, bad hub, or the phone rebooted after `adb tcpip`                                                                                           | `adb kill-server`; for wireless, `./scripts/adbtool.sh reconnect --all`; if it was a reboot, re-run `./scripts/adb-setup.sh` over USB.                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Device shows `no permissions`** (Linux)                                                    | Missing udev rule                                                                                                                                           | Add a rule for the vendor id from `lsusb`, then `sudo udevadm control --reload && adb kill-server`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Phone is `device` but Answer / Hang up / Call do nothing**                                 | The OEM blocks input injection over adb                                                                                                                     | Enable "USB debugging (Security settings)" / "Disable permission monitoring" in Developer options. Confirm with `adb -s <id> shell input keyevent 5` on a ringing call.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **Capture is silent — `raw capture: 0 bytes`, or the _capturing_ badge is on with no audio** | The chosen `--audio-source` is unavailable or silently denied on this ROM                                                                                   | Walk the chain by hand, best first: `voice-call-downlink` → `voice-call` → `output` → `mic`. Test outside NeuraCall: `scrcpy -s <id> --no-video --audio-source=voice-call` and listen. A denied privileged source often _starts_ and then produces nothing forever rather than erroring — that is why `ScrcpyAudioCapture` has a start timeout. Also check scrcpy is 3.x and the phone is Android 11+.                                                                                                                                                                                                               |
+| **Audio flows but the transcript stays empty**                                               | Usually one of three things                                                                                                                                 | (1) You are capturing the wrong side: `mic` picks up _your_ end, not the caller's — put the call on speakerphone or use a `voice-call*` source. (2) VAD is gating the silence out: `emitSilence` must stay **true**. AssemblyAI ends a turn from how much silence it received, so stripping pauses compresses the timeline into one unbroken utterance, turns never finalize, and the call goes quiet while transcription looks healthy. Both production paths set it to `true`, but the bare `AudioPipeline` default is `false` — so this bites anyone wiring their own pipeline. (3) Nobody was actually speaking. |
+| **Choppy audio, dropped words**                                                              | Wireless jitter                                                                                                                                             | Move to 5 GHz or use USB; stop any video mirroring. See section 6.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **Close 1008**                                                                               | Missing/invalid token, an account problem, or a new-session rate limit                                                                                      | **Do not retry in a loop** — it is a configuration error, and hammering turns a typo into a stream of rejected auth attempts. Check the key is the raw key with no `Bearer ` prefix and that the region matches the account. DECISIONS.md §4/§6.                                                                                                                                                                                                                                                                                                                                                                     |
+| **Close 3007**                                                                               | A chunk outside the 50–1000 ms window, or audio sent faster than real time                                                                                  | The built-in capture sends 100 ms chunks paced by capture, so this means something is feeding a file without pacing it. The policy is to halve the chunk size and reconnect — never crash.                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **Close 3009**                                                                               | Too many concurrent sessions for the account                                                                                                                | The session manager bounds concurrency and queues FIFO rather than racing into a rejection, but your _account_ limit may be lower than the local bound. Stop unused sessions.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Close 3008**                                                                               | The 3-hour session cap, or a temp token's max duration                                                                                                      | Expected on very long calls. Open a fresh session.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **A session still seems to be billing after a crash**                                        | The socket was dropped without `Terminate`                                                                                                                  | Billing is **wall-clock connection time**, not audio duration. Normal exits always Terminate — Stop, window close, app quit, and every orchestrator teardown path. A `SIGKILL`ed process cannot, so the session runs to AssemblyAI's inactivity timeout or the 3-hour cap. Prefer closing the window; check the dashboard if you killed it hard.                                                                                                                                                                                                                                                                     |
+| **The caller cannot hear the agent**                                                         | Either nothing is generating speech, or there is no transport carrying it to the call — two separate causes that look identical                             | Check which. Speech: with the Voice Agent on (Settings → Voice Agent) AssemblyAI supplies the reply _and_ the voice on the key you already have, so no LLM or TTS credential is needed; on the composed path a missing `LLM_API_KEY` or TTS provider leaves `SilentTts` in place. Transport: injection still needs Bluetooth HFP (section 3a), an on-device helper app, or acoustic coupling. `node scripts/live-voice-agent.mjs` proves the speech half without a phone. See [VOICE-AGENT.md](VOICE-AGENT.md) and [AUDIO-ABI.md](AUDIO-ABI.md).                                                                     |
+| **The agent answers its own last sentence**                                                  | A duplex capture source (`voice-call`, `mic`, `output`) is feeding the agent's own voice back into STT                                                      | Move to `voice-call-downlink` if the phone allows it. Otherwise gate `remoteIn` while `localOut.isSpeaking`, or lean on `agent_context` biasing plus barge-in to discard turns that echo what the agent just said.                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **`npm run typecheck` fails in `apps/desktop` after editing a package**                      | Consumers resolve packages through their built `dist/`                                                                                                      | `npm run build -w @neuracall/<pkg>` (or `npm run build`) first.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **scrcpy `ERROR` / `WARN` lines in the app log**                                             | Forwarded verbatim from scrcpy                                                                                                                              | `Audio capture failed` / `Could not configure audio` → the source is unsupported here; try the next one. `device disconnected` → the adb transport dropped; see the wireless notes.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Windows: higher latency, temp files under `%TEMP%`**                                       | Expected                                                                                                                                                    | Windows has no `mkfifo`, so the bridge records to a temp `.wav` and tail-reads it every 100 ms, deleting it on exit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 ## 8. Data handling
 

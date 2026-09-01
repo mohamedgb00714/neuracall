@@ -32,7 +32,10 @@ test("DeviceManager reconciles connected devices", async () => {
   assert.equal(snap.length, 2);
   assert.equal(snap.find((d) => d.id === "emulator-5554")?.kind, "usb");
   assert.equal(snap.find((d) => d.id === "192.168.0.10:5555")?.kind, "wifi");
-  assert.equal(snap.every((d) => d.adbState === "device"), true);
+  assert.equal(
+    snap.every((d) => d.adbState === "device"),
+    true,
+  );
 });
 
 test("DeviceManager flattens a USB device as offline when it disappears", async () => {
@@ -61,9 +64,7 @@ test("DeviceManager keeps a custom phase across refreshes", async () => {
 });
 
 test("DeviceManager marks everything offline when adb fails", async () => {
-  const runner = stubRunner([
-    ["List of devices attached", "emulator-5554\tdevice"],
-  ]);
+  const runner = stubRunner([["List of devices attached", "emulator-5554\tdevice"]]);
   const dm = new DeviceManager({ runner });
   await dm.refresh();
   assert.equal(dm.get("emulator-5554")?.phase, "online");
@@ -115,9 +116,7 @@ test("AndroidCallController.hangUp sends KEYCODE_ENDCALL", async () => {
   };
   const ctl = new AndroidCallController(runner, "serial1");
   await ctl.hangUp();
-  assert.deepEqual(calls, [
-    ["shell", "input", "keyevent", String(KeyCodes.KEYCODE_ENDCALL)],
-  ]);
+  assert.deepEqual(calls, [["shell", "input", "keyevent", String(KeyCodes.KEYCODE_ENDCALL)]]);
 });
 
 function recordingRunner(reply = ""): { runner: CommandRunner; calls: string[][] } {

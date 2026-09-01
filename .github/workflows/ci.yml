@@ -30,10 +30,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      # NOTE: `npm run format:check` is deliberately not a gate yet — 52 files
-      # predate Prettier being wired up and fail it. Run `npm run format` as a
-      # standalone commit, then add the check here; gating on a check that is
-      # already red trains people to ignore CI.
+      # The whole tree was formatted in one standalone commit, so this is green
+      # from the day it was added — a gate introduced while already red just
+      # trains people to ignore CI.
+      - name: Format
+        run: npm run format:check
 
       # Builds every workspace. The e2e suite consumes the other packages
       # through their published `dist/`, so this has to happen before tests.

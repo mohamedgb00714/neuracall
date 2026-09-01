@@ -23,12 +23,7 @@
  * HTTP response technically arrived.
  */
 
-import type {
-  AgentReply,
-  AgentTurnContext,
-  CallAgent,
-  CallRecord,
-} from "@neuracall/orchestrator";
+import type { AgentReply, AgentTurnContext, CallAgent, CallRecord } from "@neuracall/orchestrator";
 import { ConversationStore, type ChatMessage, type Conversation } from "./conversation.js";
 import type { LlmClient, LlmMessage } from "./llm.js";
 import { SilentTts, type TtsClient } from "./tts.js";

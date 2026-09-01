@@ -90,9 +90,7 @@ export function parseRegion(raw: string | undefined): Region {
   const value = (raw ?? "").toLowerCase().trim();
   if (value === "") return DEFAULT_REGION;
   if (value === "us" || value === "eu" || value === "edge") return value;
-  throw new Error(
-    `Invalid ASSEMBLYAI_REGION="${raw}". Expected one of: ${REGIONS.join(", ")}.`,
-  );
+  throw new Error(`Invalid ASSEMBLYAI_REGION="${raw}". Expected one of: ${REGIONS.join(", ")}.`);
 }
 
 /** Derive the REST base URL, realtime host and token URL for a region. */

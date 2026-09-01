@@ -92,7 +92,11 @@ test("prompts keep their line breaks", () => {
   // Trimming a prompt the way ids are trimmed would quietly reflow it; line
   // breaks are how a system prompt is written.
   const prompt = "Line one.\n\nLine two.";
-  const patch = toPatch(form({ voiceAgentSystemPrompt: prompt, voiceAgentGreeting: prompt }), [], NUMBERS);
+  const patch = toPatch(
+    form({ voiceAgentSystemPrompt: prompt, voiceAgentGreeting: prompt }),
+    [],
+    NUMBERS,
+  );
   assert.equal(patch.voiceAgent?.systemPrompt, prompt);
   assert.equal(patch.voiceAgent?.greeting, prompt);
 });

@@ -43,9 +43,7 @@ export function ToolsNotice() {
   }, []);
 
   if (error) {
-    return (
-      <div className="tool-notice tool-error">Could not check required tools: {error}</div>
-    );
+    return <div className="tool-notice tool-error">Could not check required tools: {error}</div>;
   }
   if (!tools) return null; // still loading
 
@@ -57,10 +55,7 @@ export function ToolsNotice() {
       {installed.length > 0 && (
         <div className="tool-notice tool-ready">
           <span className="tool-dot" aria-hidden="true" />
-          {installed
-            .map((t) => `${t.tool}${t.version ? ` (${t.version})` : ""}`)
-            .join(" · ")}{" "}
-          ready
+          {installed.map((t) => `${t.tool}${t.version ? ` (${t.version})` : ""}`).join(" · ")} ready
         </div>
       )}
       {missing.map((t) => {
@@ -84,8 +79,8 @@ export function ToolsNotice() {
               </div>
             </div>
             <p>
-              The <code>{t.binary}</code> binary was not found on this machine. Install it,
-              then click “Re-check”.
+              The <code>{t.binary}</code> binary was not found on this machine. Install it, then
+              click “Re-check”.
             </p>
             <pre className="tool-guide">{t.installGuide}</pre>
           </div>

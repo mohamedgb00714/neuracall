@@ -255,7 +255,10 @@ export class ReconnectPolicy {
  * allows: delta-seconds, and an HTTP-date. Returns undefined when absent or
  * unparseable, so the caller falls back to its own backoff.
  */
-export function parseRetryAfter(header: string | null | undefined, now = Date.now()): number | undefined {
+export function parseRetryAfter(
+  header: string | null | undefined,
+  now = Date.now(),
+): number | undefined {
   if (header === null || header === undefined) return undefined;
   const trimmed = header.trim();
   if (trimmed === "") return undefined;

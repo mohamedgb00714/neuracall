@@ -77,7 +77,11 @@ test("loadConfig loads the file then validates (placeholder key still fails fast
     // loadEnv does not override, so clear what the failed attempt set before retrying
     delete process.env.ASSEMBLYAI_API_KEY;
 
-    writeFileSync(path, "ASSEMBLYAI_API_KEY=unit-test-not-a-real-key\nASSEMBLYAI_REGION=eu\n", "utf8");
+    writeFileSync(
+      path,
+      "ASSEMBLYAI_API_KEY=unit-test-not-a-real-key\nASSEMBLYAI_REGION=eu\n",
+      "utf8",
+    );
     const cfg = loadConfig(path);
     assert.equal(cfg.assemblyai.region, "eu");
     assert.equal(cfg.assemblyai.tokenUrl, "https://streaming.eu.assemblyai.com/v3/token");

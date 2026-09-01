@@ -381,7 +381,11 @@ export class VoiceAgentBridge implements SttSessionManager {
   }
 
   /** The call whose socket serves this turn, remembered by callId. */
-  private callFor(ctx: { callId: string; deviceId: string; channelId: string }): VoiceAgentCall | undefined {
+  private callFor(ctx: {
+    callId: string;
+    deviceId: string;
+    channelId: string;
+  }): VoiceAgentCall | undefined {
     const known = this.byCallId.get(ctx.callId);
     if (known) return known;
     const call = this.calls.get(keyOf(ctx));

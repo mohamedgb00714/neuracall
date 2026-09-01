@@ -34,10 +34,7 @@ const TTS_PROVIDERS: TtsProvider[] = ["auto", "openai", "elevenlabs", "command",
 const CAPTURE_SOURCES = ["voice-call-downlink", "voice-call", "output", "playback", "mic"];
 
 type SaveState =
-  | { kind: "idle" }
-  | { kind: "pending" }
-  | { kind: "saved" }
-  | { kind: "error"; message: string };
+  { kind: "idle" } | { kind: "pending" } | { kind: "saved" } | { kind: "error"; message: string };
 
 function toForm(s: RedactedSettings): Form {
   return {
@@ -509,10 +506,10 @@ export function SettingsPage() {
           </datalist>
         </Field>
         <p className="settings-note">
-          <code>mic</code> records the phone’s microphone — <strong>your</strong> side of the
-          call. To transcribe the far end the phone must allow{" "}
-          <code>voice-call-downlink</code> (privileged, OEM-dependent), or the call has to be on
-          speakerphone so <code>output</code> picks the caller up.
+          <code>mic</code> records the phone’s microphone — <strong>your</strong> side of the call.
+          To transcribe the far end the phone must allow <code>voice-call-downlink</code>{" "}
+          (privileged, OEM-dependent), or the call has to be on speakerphone so <code>output</code>{" "}
+          picks the caller up.
         </p>
         <Field
           label="Injection sink"

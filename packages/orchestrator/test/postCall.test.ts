@@ -40,7 +40,10 @@ function record(overrides: Partial<CallRecord> = {}): CallRecord {
 function writeWav(dir: string, name: string, seconds: number): string {
   const dataBytes = Math.round(seconds * SAMPLE_RATE) * 2;
   const path = join(dir, name);
-  writeFileSync(path, Buffer.concat([wavHeaderMono16(SAMPLE_RATE, dataBytes), Buffer.alloc(dataBytes)]));
+  writeFileSync(
+    path,
+    Buffer.concat([wavHeaderMono16(SAMPLE_RATE, dataBytes), Buffer.alloc(dataBytes)]),
+  );
   return path;
 }
 

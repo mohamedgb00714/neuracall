@@ -107,13 +107,19 @@ test('saving the redacted view back keeps the stored keys ("" means unchanged)',
 });
 
 test("a non-empty apiKey replaces the stored one", () => {
-  const next = applyPatch(configured(), parseSettingsPatch({ llm: { apiKey: "sk-or-v1-replacement" } }));
+  const next = applyPatch(
+    configured(),
+    parseSettingsPatch({ llm: { apiKey: "sk-or-v1-replacement" } }),
+  );
   assert.equal(next.llm.apiKey, "sk-or-v1-replacement");
   assert.equal(next.tts.apiKey, TTS_KEY, "an untouched section keeps its key");
 });
 
 test("an explicit null clears the stored key", () => {
-  const next = applyPatch(configured(), parseSettingsPatch({ llm: { apiKey: null }, tts: { apiKey: null } }));
+  const next = applyPatch(
+    configured(),
+    parseSettingsPatch({ llm: { apiKey: null }, tts: { apiKey: null } }),
+  );
   assert.equal(next.llm.apiKey, "");
   assert.equal(next.tts.apiKey, "");
   assert.equal(toRedacted(next).llm.hasApiKey, false);
@@ -142,7 +148,10 @@ test("a cleared key does not come back from the environment layer", () => {
 
 test("applyPatch does not mutate the settings it was given", () => {
   const stored = configured();
-  applyPatch(stored, parseSettingsPatch({ llm: { apiKey: null }, assemblyai: { keyterms: ["x"] } }));
+  applyPatch(
+    stored,
+    parseSettingsPatch({ llm: { apiKey: null }, assemblyai: { keyterms: ["x"] } }),
+  );
   assert.equal(stored.llm.apiKey, LLM_KEY);
   assert.deepEqual(stored.assemblyai.keyterms, []);
 });
@@ -163,9 +172,17 @@ test("every rejected value names the field it came from", () => {
     ["port above the range", { autopilot: { healthPort: 65536 } }, "autopilot.healthPort"],
     ["fractional port", { autopilot: { healthPort: 8080.5 } }, "autopilot.healthPort"],
     ["timeout below the floor", { autopilot: { maxCallMs: 999 } }, "autopilot.maxCallMs"],
-    ["timeout above the ceiling", { autopilot: { maxCallMs: 6 * 3600_000 + 1 } }, "autopilot.maxCallMs"],
+    [
+      "timeout above the ceiling",
+      { autopilot: { maxCallMs: 6 * 3600_000 + 1 } },
+      "autopilot.maxCallMs",
+    ],
     ["stall above the ceiling", { autopilot: { stallMs: 3600_001 } }, "autopilot.stallMs"],
-    ["nonsense country code", { autopilot: { defaultCountryCode: "morocco" } }, "autopilot.defaultCountryCode"],
+    [
+      "nonsense country code",
+      { autopilot: { defaultCountryCode: "morocco" } },
+      "autopilot.defaultCountryCode",
+    ],
     [
       "too many keyterms",
       { assemblyai: { keyterms: Array.from({ length: 101 }, (_, i) => `term-${i}`) } },
@@ -201,7 +218,10 @@ test("values at the edge of each range are accepted", () => {
 
   assert.equal(parseSettingsPatch({ autopilot: { healthPort: null } }).autopilot?.healthPort, null);
   assert.equal(parseSettingsPatch({ autopilot: { healthPort: "" } }).autopilot?.healthPort, null);
-  assert.equal(parseSettingsPatch({ autopilot: { healthPort: "9464" } }).autopilot?.healthPort, 9464);
+  assert.equal(
+    parseSettingsPatch({ autopilot: { healthPort: "9464" } }).autopilot?.healthPort,
+    9464,
+  );
 });
 
 test("a rejected save leaves nothing behind on disk or in memory", () => {
@@ -256,20 +276,31 @@ test("precedence is defaults < environment < settings.json", () => {
     );
     assert.deepEqual(fresh.problems, []);
 
-    writeFileSync(file, JSON.stringify({ assemblyai: { region: "us" }, llm: { model: "from/file" } }));
+    writeFileSync(
+      file,
+      JSON.stringify({ assemblyai: { region: "us" }, llm: { model: "from/file" } }),
+    );
 
     const loaded = new SettingsStore({ file, env });
     loaded.load();
     assert.equal(loaded.current.assemblyai.region, "us", "the file beats the environment");
     assert.equal(loaded.current.llm.model, "from/file");
-    assert.equal(loaded.current.assemblyai.mode, "max_accuracy", "the environment still fills the gaps");
+    assert.equal(
+      loaded.current.assemblyai.mode,
+      "max_accuracy",
+      "the environment still fills the gaps",
+    );
     assert.equal(loaded.current.llm.apiKey, LLM_KEY);
     assert.equal(loaded.current.audio.captureSource, "mic", "and the defaults fill the rest");
   });
 });
 
 test("an unedited .env.example contributes nothing", () => {
-  const raw = settingsFromEnv({ LLM_API_KEY: "replace-me", TTS_API_KEY: "  ", ASSEMBLYAI_REGION: "" });
+  const raw = settingsFromEnv({
+    LLM_API_KEY: "replace-me",
+    TTS_API_KEY: "  ",
+    ASSEMBLYAI_REGION: "",
+  });
   assert.deepEqual(raw, {}, "placeholders and blanks must read as unset");
 });
 
@@ -309,7 +340,11 @@ test("a save leaves one valid 0600 file and no temp file", () => {
     store.load();
     store.save({ llm: { apiKey: LLM_KEY, model: "anthropic/claude-sonnet-4" } });
 
-    assert.deepEqual(readdirSync(dir), ["settings.json"], "the temp file must not survive the rename");
+    assert.deepEqual(
+      readdirSync(dir),
+      ["settings.json"],
+      "the temp file must not survive the rename",
+    );
 
     const parsed = JSON.parse(readFileSync(file, "utf8")) as NeuraCallSettings;
     assert.equal(parsed.llm.apiKey, LLM_KEY);
@@ -343,7 +378,11 @@ test("a failed save names the file and leaves no temp file behind", () => {
 
     assert.throws(() => store.save({ llm: { model: "x" } }), /Could not write .*settings\.json/);
     assert.deepEqual(readdirSync(dir), ["settings.json"], "the temp file must be cleaned up");
-    assert.equal(store.current.llm.model, "", "a failed save must not update the in-memory settings");
+    assert.equal(
+      store.current.llm.model,
+      "",
+      "a failed save must not update the in-memory settings",
+    );
   });
 });
 
@@ -367,7 +406,10 @@ test("a corrupt settings file falls back to defaults and records a problem", () 
 
 test("a settings file that parses but validates badly is treated the same way", () => {
   withTempDir((_dir, file) => {
-    writeFileSync(file, JSON.stringify({ assemblyai: { region: "apac" }, llm: { model: "ok/model" } }));
+    writeFileSync(
+      file,
+      JSON.stringify({ assemblyai: { region: "apac" }, llm: { model: "ok/model" } }),
+    );
 
     const store = new SettingsStore({ file, env: {} });
     store.load();

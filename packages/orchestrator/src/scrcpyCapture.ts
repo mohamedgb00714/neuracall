@@ -64,9 +64,7 @@ export class ScrcpyAudioCapture implements AudioCapture {
       selector.fail(failure);
     }
 
-    const tried = [...selector.attempts]
-      .map(([source, why]) => `${source} (${why})`)
-      .join(", ");
+    const tried = [...selector.attempts].map(([source, why]) => `${source} (${why})`).join(", ");
     throw new Error(
       `No usable audio source for ${deviceId}. Tried: ${tried || "none"}. ` +
         `See docs/AUDIO-ABI.md — on a locked-down build only --audio-source=mic may work.`,

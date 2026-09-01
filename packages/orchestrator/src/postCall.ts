@@ -258,7 +258,10 @@ export class PostCallProcessor {
       const info = await this.fs.stat(audioPath);
       if (info === undefined) return skipped("audio-missing", audioPath);
       sizeBytes = info.size;
-      durationSec = wavDurationSec(await this.fs.readHead(audioPath, WAV_HEADER_PROBE_BYTES), sizeBytes);
+      durationSec = wavDurationSec(
+        await this.fs.readHead(audioPath, WAV_HEADER_PROBE_BYTES),
+        sizeBytes,
+      );
     } catch (err) {
       return skipped("audio-unreadable", describeError(err));
     }

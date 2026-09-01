@@ -49,7 +49,10 @@ test("the section defaults to off, inline, and on a voice the service knows", ()
     greeting: "",
     systemPrompt: "",
   });
-  assert.ok(isVoiceId(voiceAgent.voice), "the default has to be in the catalogue, not just a string");
+  assert.ok(
+    isVoiceId(voiceAgent.voice),
+    "the default has to be in the catalogue, not just a string",
+  );
 });
 
 // ------------------------------------------------------------- env  booleans
@@ -128,7 +131,10 @@ test("only a voice the service will accept gets past the validator", () => {
 // -------------------------------------------------------------- the agent id
 
 test('an agentId is a uuid, or "" meaning "configure the agent inline"', () => {
-  assert.equal(parseSettingsPatch({ voiceAgent: { agentId: AGENT_ID } }).voiceAgent?.agentId, AGENT_ID);
+  assert.equal(
+    parseSettingsPatch({ voiceAgent: { agentId: AGENT_ID } }).voiceAgent?.agentId,
+    AGENT_ID,
+  );
   assert.equal(
     parseSettingsPatch({ voiceAgent: { agentId: AGENT_ID.toUpperCase() } }).voiceAgent?.agentId,
     AGENT_ID.toUpperCase(),
@@ -227,7 +233,11 @@ test("the layers stack: defaults, then the environment, then a save", () => {
 
     store.save({ voiceAgent: { agentId: AGENT_ID, greeting: "" } });
     assert.equal(store.current.voiceAgent.agentId, AGENT_ID);
-    assert.equal(store.current.voiceAgent.greeting, "", "an empty greeting is a value, not a no-op");
+    assert.equal(
+      store.current.voiceAgent.greeting,
+      "",
+      "an empty greeting is a value, not a no-op",
+    );
     assert.equal(store.current.voiceAgent.systemPrompt, "Be brief.", "an untouched field survives");
     assert.equal(store.current.voiceAgent.enabled, true);
 

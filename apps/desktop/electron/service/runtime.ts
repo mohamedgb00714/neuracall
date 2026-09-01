@@ -1,11 +1,7 @@
 import { EventEmitter } from "node:events";
 import { resolve } from "node:path";
 import type { AppConfig } from "@neuracall/config";
-import {
-  RealtimeSessionManager,
-  type SessionKey,
-  type TurnEvent,
-} from "@neuracall/aai-client";
+import { RealtimeSessionManager, type SessionKey, type TurnEvent } from "@neuracall/aai-client";
 import {
   DeviceManager,
   AndroidCallController,
@@ -123,13 +119,15 @@ export class Runtime extends EventEmitter {
     this.capture.on("start", (s: CaptureSession) =>
       this.emit("capture", { ...s, state: "started" } satisfies CaptureUpdate),
     );
-    this.capture.on("exit", (s: CaptureSession, r: { code: number | null; signal: string | null }) =>
-      this.emit("capture", {
-        ...s,
-        state: "exited",
-        exitCode: r.code,
-        signal: r.signal,
-      } satisfies CaptureUpdate),
+    this.capture.on(
+      "exit",
+      (s: CaptureSession, r: { code: number | null; signal: string | null }) =>
+        this.emit("capture", {
+          ...s,
+          state: "exited",
+          exitCode: r.code,
+          signal: r.signal,
+        } satisfies CaptureUpdate),
     );
     this.capture.on("log", (endpoint: string, line: string) =>
       this.emit("capture-log", endpoint, line, false),
@@ -140,14 +138,10 @@ export class Runtime extends EventEmitter {
 
     // Re-broadcast manager events out of the runtime for the main process.
     this.manager.on("turn", (key, turn) => this.emit("turn", key, turn));
-    this.manager.on("sessionEnd", (key, reason) =>
-      this.emit("sessionEnd", key, reason),
-    );
+    this.manager.on("sessionEnd", (key, reason) => this.emit("sessionEnd", key, reason));
     this.manager.on("error", (key, err) => this.emit("error", key, err));
     this.devices.on("device", (device) => this.emit("device", device));
-    this.devices.on("adb-state", (id, state) =>
-      this.emit("adb-state", id, state),
-    );
+    this.devices.on("adb-state", (id, state) => this.emit("adb-state", id, state));
     this.devices.on("phase", (id, phase) => this.emit("phase", id, phase));
   }
 
@@ -174,10 +168,7 @@ export class Runtime extends EventEmitter {
   start(): void {
     this.devices.start();
     if (this.callPollIntervalMs > 0 && !this.callTimer) {
-      this.callTimer = setInterval(
-        () => void this.pollCallStates(),
-        this.callPollIntervalMs,
-      );
+      this.callTimer = setInterval(() => void this.pollCallStates(), this.callPollIntervalMs);
       this.callTimer.unref?.();
     }
   }

@@ -93,7 +93,10 @@ function makeBridge(
 }
 
 test("buildArgs emits a verified audio-only scrcpy invocation recording WAV", () => {
-  const { bridge } = makeBridge(new FakeChild(), { endpoint: "192.168.0.10:5555", audioSource: "mic" });
+  const { bridge } = makeBridge(new FakeChild(), {
+    endpoint: "192.168.0.10:5555",
+    audioSource: "mic",
+  });
   assert.deepEqual(bridge.buildArgs("/tmp/x.fifo"), [
     "-s",
     "192.168.0.10:5555",
@@ -121,7 +124,9 @@ test("stderr ERROR/WARN lines become 'error', other output becomes 'log'", async
   h.bridge.on("error", (m) => errors.push(m));
   h.bridge.on("log", (m) => logs.push(m));
   h.bridge.start();
-  fake.stderr.write("INFO: No video mirroring, SDK mouse disabled\nWARN: Audio capture: something\n");
+  fake.stderr.write(
+    "INFO: No video mirroring, SDK mouse disabled\nWARN: Audio capture: something\n",
+  );
   fake.stdout.write("scrcpy 3.3.4 <https://github.com/Genymobile/scrcpy>\n[server] ERROR: boom\n");
   await sleep(5);
   assert.deepEqual(errors, ["WARN: Audio capture: something", "[server] ERROR: boom"]);
@@ -220,50 +225,58 @@ test("win32 defaults to the file transport", () => {
   fake.emit("close", 0, null);
 });
 
-test("fifo transport: creates a FIFO, streams PCM written to it, cleans up on exit", { skip: !POSIX }, async () => {
-  const recordPath = tmp("cap.fifo");
-  const fake = new FakeChild();
-  const h = makeBridge(fake, { transport: "fifo", recordPath });
-  const formats: WavFormat[] = [];
-  h.bridge.on("format", (f) => formats.push(f));
-  h.bridge.start();
-  assert.equal(h.bridge.activeTransport, "fifo");
-  assert.equal(h.bridge.target, recordPath);
-  assert.equal(h.spawnedArgs.at(-1), recordPath);
-  assert.ok(statSync(recordPath).isFIFO(), "record path must be a FIFO");
+test(
+  "fifo transport: creates a FIFO, streams PCM written to it, cleans up on exit",
+  { skip: !POSIX },
+  async () => {
+    const recordPath = tmp("cap.fifo");
+    const fake = new FakeChild();
+    const h = makeBridge(fake, { transport: "fifo", recordPath });
+    const formats: WavFormat[] = [];
+    h.bridge.on("format", (f) => formats.push(f));
+    h.bridge.start();
+    assert.equal(h.bridge.activeTransport, "fifo");
+    assert.equal(h.bridge.target, recordPath);
+    assert.equal(h.spawnedArgs.at(-1), recordPath);
+    assert.ok(statSync(recordPath).isFIFO(), "record path must be a FIFO");
 
-  // behave like scrcpy: open the FIFO for writing (does not block — the bridge
-  // holds a reader), write the WAV stream in pieces, close.
-  const wfd = openSync(recordPath, "w");
-  writeSync(wfd, Buffer.concat([wavHeader(FMT), Buffer.from([1, 2, 3])]));
-  await sleep(30);
-  writeSync(wfd, Buffer.from([4, 5]));
-  await sleep(30);
-  assert.deepEqual(h.pcm(), [1, 2, 3, 4, 5]);
-  assert.equal(formats.length, 1);
-  assert.equal(h.format?.channels, 2);
+    // behave like scrcpy: open the FIFO for writing (does not block — the bridge
+    // holds a reader), write the WAV stream in pieces, close.
+    const wfd = openSync(recordPath, "w");
+    writeSync(wfd, Buffer.concat([wavHeader(FMT), Buffer.from([1, 2, 3])]));
+    await sleep(30);
+    writeSync(wfd, Buffer.from([4, 5]));
+    await sleep(30);
+    assert.deepEqual(h.pcm(), [1, 2, 3, 4, 5]);
+    assert.equal(formats.length, 1);
+    assert.equal(h.format?.channels, 2);
 
-  // bytes written right before the process exits must still be delivered
-  writeSync(wfd, Buffer.from([6]));
-  closeSync(wfd);
-  const exited = once(h.bridge, "exit");
-  fake.emit("close", 0, null);
-  const [exit] = await exited;
-  assert.deepEqual(exit, { endpoint: "s1", code: 0, signal: null });
-  assert.deepEqual(h.pcm(), [1, 2, 3, 4, 5, 6]);
-  assert.equal(existsSync(recordPath), false, "FIFO is removed");
-  assert.equal(h.ended, 1);
-});
+    // bytes written right before the process exits must still be delivered
+    writeSync(wfd, Buffer.from([6]));
+    closeSync(wfd);
+    const exited = once(h.bridge, "exit");
+    fake.emit("close", 0, null);
+    const [exit] = await exited;
+    assert.deepEqual(exit, { endpoint: "s1", code: 0, signal: null });
+    assert.deepEqual(h.pcm(), [1, 2, 3, 4, 5, 6]);
+    assert.equal(existsSync(recordPath), false, "FIFO is removed");
+    assert.equal(h.ended, 1);
+  },
+);
 
-test("fifo transport: exit with no data at all still finishes promptly", { skip: !POSIX }, async () => {
-  const fake = new FakeChild();
-  const h = makeBridge(fake, { transport: "fifo", recordPath: tmp("empty.fifo") });
-  h.bridge.start();
-  const t0 = Date.now();
-  const exited = once(h.bridge, "exit");
-  fake.emit("close", 1, null);
-  await exited;
-  assert.ok(Date.now() - t0 < 500);
-  assert.equal(h.pcm().length, 0);
-  assert.equal(h.ended, 1);
-});
+test(
+  "fifo transport: exit with no data at all still finishes promptly",
+  { skip: !POSIX },
+  async () => {
+    const fake = new FakeChild();
+    const h = makeBridge(fake, { transport: "fifo", recordPath: tmp("empty.fifo") });
+    h.bridge.start();
+    const t0 = Date.now();
+    const exited = once(h.bridge, "exit");
+    fake.emit("close", 1, null);
+    await exited;
+    assert.ok(Date.now() - t0 < 500);
+    assert.equal(h.pcm().length, 0);
+    assert.equal(h.ended, 1);
+  },
+);

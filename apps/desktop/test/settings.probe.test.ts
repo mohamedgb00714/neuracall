@@ -81,14 +81,19 @@ test("a provider that echoes the key back in its error does not leak it", async 
     for (const key of ALL_KEYS) {
       assert.ok(!result.detail.includes(key), `key in detail: ${result.detail}`);
     }
-    assert.ok(result.detail.includes("***"), `the key should be masked, not dropped: ${result.detail}`);
+    assert.ok(
+      result.detail.includes("***"),
+      `the key should be masked, not dropped: ${result.detail}`,
+    );
   }
   assertNoKeys(report);
 });
 
 test("a key quoted inside a transport error does not leak either", async () => {
   const stub = stubFetch((url) => {
-    throw new Error(`connect ECONNREFUSED while presenting ${url.includes("assemblyai") ? AAI_KEY : LLM_KEY}`);
+    throw new Error(
+      `connect ECONNREFUSED while presenting ${url.includes("assemblyai") ? AAI_KEY : LLM_KEY}`,
+    );
   });
 
   const report = await run(settingsWithKeys(), stub);

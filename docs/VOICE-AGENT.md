@@ -35,7 +35,7 @@ or 8000 accepts the connection, accepts `session.update`, and then fails the
 instant the session starts with:
 
 ```json
-{"type":"session.error","code":"internal_error","message":"Internal service error"}
+{ "type": "session.error", "code": "internal_error", "message": "Internal service error" }
 ```
 
 followed by a WebSocket close 1011. Nothing in that message mentions audio, the
@@ -57,8 +57,10 @@ A custom LLM cannot be configured on the wire. Sending an `llm` block in
 `session.update` is rejected:
 
 ```json
-{"code":"invalid_value",
- "message":"BYO LLM config is not allowed on session.update; define it on a stored agent via POST /v1/agents"}
+{
+  "code": "invalid_value",
+  "message": "BYO LLM config is not allowed on session.update; define it on a stored agent via POST /v1/agents"
+}
 ```
 
 So a custom model means creating a stored agent through
@@ -80,8 +82,7 @@ the path that works on an account without LLM Gateway model access.
 `session.update` takes it under `output`, as a bare string:
 
 ```json
-{ "type": "session.update",
-  "session": { "system_prompt": "...", "output": { "voice": "alba" } } }
+{ "type": "session.update", "session": { "system_prompt": "...", "output": { "voice": "alba" } } }
 ```
 
 Sending the first shape on the wire is rejected with
@@ -105,7 +106,7 @@ The first frame after the socket opens **must** be `session.update`, and
 only be sent after `session.ready`.
 
 The agent's speech arrives as `reply.audio` with the base64 payload in a field
-named **`data`** — not `audio`, which is the field name used when *sending*
+named **`data`** — not `audio`, which is the field name used when _sending_
 audio. Getting this backwards produces a session that appears to work and is
 silent.
 
@@ -117,7 +118,7 @@ after which the session is gone.
 
 ## Voices
 
-Sixteen voices across six spoken languages, though the agent *recognises*
+Sixteen voices across six spoken languages, though the agent _recognises_
 eighteen. English: `alba`, `eve`, `george`, `jane`, `jean`, `mary`, `michael`
 (US) and `anna`, `charles`, `paul`, `vera` (UK). Then `giovanni` (Italian),
 `lola` (Spanish), `juergen` (German), `rafael` (Portuguese), `estelle` (French).

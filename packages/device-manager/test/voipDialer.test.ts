@@ -46,7 +46,10 @@ test("only clickable nodes are considered", () => {
 });
 
 test("a screen with no call button yields none rather than a wrong tap", () => {
-  assert.equal(findVoiceCallButton('<node clickable="true" content-desc="Retour" bounds="[0,0][10,10]"/>'), null);
+  assert.equal(
+    findVoiceCallButton('<node clickable="true" content-desc="Retour" bounds="[0,0][10,10]"/>'),
+    null,
+  );
 });
 
 test("numbers are promoted to international form for the deep link", () => {

@@ -249,7 +249,7 @@ export class VoipDialer {
         throw new Error(
           screen.secure
             ? "The phone is locked with a PIN, pattern or password, which adb cannot clear. " +
-              "Remove the screen lock on handsets NeuraCall drives (see docs/RUNBOOK.md)."
+                "Remove the screen lock on handsets NeuraCall drives (see docs/RUNBOOK.md)."
             : "The phone is still showing a keyguard after dismiss-keyguard; taps would not reach the app.",
         );
       }
@@ -269,13 +269,7 @@ export class VoipDialer {
     const at = nodeCentre(button);
     const label = button.contentDesc || button.text || button.resourceId;
     this.opts.onStep?.(`tapping "${label}" at ${at.x},${at.y}`);
-    await this.runner.runForDevice(endpoint, [
-      "shell",
-      "input",
-      "tap",
-      String(at.x),
-      String(at.y),
-    ]);
+    await this.runner.runForDevice(endpoint, ["shell", "input", "tap", String(at.x), String(at.y)]);
     return { channel, digits, tappedAt: at, buttonLabel: label, ...(screen ? { screen } : {}) };
   }
 

@@ -102,9 +102,7 @@ function requireApiKey(env: NodeJS.ProcessEnv, name: string): string {
   }
   const value = raw.trim();
   if (/^bearer\s/i.test(value)) {
-    throw new Error(
-      `${name} must be the raw AssemblyAI key without a "Bearer " prefix.`,
-    );
+    throw new Error(`${name} must be the raw AssemblyAI key without a "Bearer " prefix.`);
   }
   if (/\s/.test(value)) {
     throw new Error(`${name} must not contain whitespace.`);

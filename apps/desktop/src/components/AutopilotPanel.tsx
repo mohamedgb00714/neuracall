@@ -191,10 +191,7 @@ function CallList(props: {
 }
 
 function CallCard({ call, now, live }: { call: CallRecord; now: number; live: boolean }) {
-  const duration = Math.max(
-    0,
-    Math.round(((call.endedAt ?? now) - call.startedAt) / 1000),
-  );
+  const duration = Math.max(0, Math.round(((call.endedAt ?? now) - call.startedAt) / 1000));
 
   return (
     <article className="call-card">
@@ -205,7 +202,10 @@ function CallCard({ call, now, live }: { call: CallRecord; now: number; live: bo
         {call.outcome && <span className="tag">{call.outcome}</span>}
         <span className="muted">{duration}s</span>
         {live && (
-          <button type="button" onClick={() => void window.neuracall?.endAutopilotCall(call.callId)}>
+          <button
+            type="button"
+            onClick={() => void window.neuracall?.endAutopilotCall(call.callId)}
+          >
             Hang up
           </button>
         )}

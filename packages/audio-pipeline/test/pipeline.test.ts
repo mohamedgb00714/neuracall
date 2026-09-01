@@ -73,7 +73,13 @@ test("pipeline gates away pure silence when emitSilence is false", () => {
 test("pipeline resamples stereo 44.1k input to mono 16k output", () => {
   const { out, chunks } = collect();
   const p = new AudioPipeline(
-    { inputSampleRate: 44100, inputChannels: 2, targetSampleRate: 16000, chunkMs: 100, vadThreshold: 0.01 },
+    {
+      inputSampleRate: 44100,
+      inputChannels: 2,
+      targetSampleRate: 16000,
+      chunkMs: 100,
+      vadThreshold: 0.01,
+    },
     out,
   );
   // 44100 frames of stereo 44.1k Int16 = 44100 * 2ch * 2bytes = 176400 bytes

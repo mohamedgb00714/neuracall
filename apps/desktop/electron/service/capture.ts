@@ -11,11 +11,7 @@ import {
 } from "@neuracall/scrcpy-bridge";
 import { AudioPipeline, type AudioChunk } from "@neuracall/audio-pipeline";
 
-export type FeedAudio = (
-  deviceId: string,
-  channelId: string,
-  chunk: Buffer,
-) => boolean;
+export type FeedAudio = (deviceId: string, channelId: string, chunk: Buffer) => boolean;
 
 export interface DeviceAudioCaptureOptions {
   /** Forwards a converted PCM16 (mono, `targetSampleRate`) chunk to the open realtime session. */
@@ -162,7 +158,8 @@ export class DeviceAudioCapture extends EventEmitter {
       format: build,
       push: (buf: Uint8Array) => {
         // Defensive default if scrcpy ever omits the header: 48 kHz stereo.
-        if (!pipeline) build({ formatTag: 1, channels: 2, sampleRate: 48000, bitsPerSample: 16, blockAlign: 4 });
+        if (!pipeline)
+          build({ formatTag: 1, channels: 2, sampleRate: 48000, bitsPerSample: 16, blockAlign: 4 });
         pipeline!.push(buf);
       },
       end: () => {

@@ -82,12 +82,7 @@ export class AndroidCallController implements CallController {
   }
 
   private async keyEvent(code: number): Promise<void> {
-    await this.runner.runForDevice(this.endpoint, [
-      "shell",
-      "input",
-      "keyevent",
-      String(code),
-    ]);
+    await this.runner.runForDevice(this.endpoint, ["shell", "input", "keyevent", String(code)]);
   }
 }
 

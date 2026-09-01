@@ -43,7 +43,9 @@ test("header split across many tiny chunks still syncs", () => {
 
 test("ignores text before the RIFF signature (scrcpy banner / adb output)", () => {
   const reader = new WavStreamReader();
-  const junk = Buffer.from("/usr/share/scrcpy/scrcpy-server: 1 file pushed\nscrcpy 3.3.4 <https://…>\n");
+  const junk = Buffer.from(
+    "/usr/share/scrcpy/scrcpy-server: 1 file pushed\nscrcpy 3.3.4 <https://…>\n",
+  );
   const { pcm } = collect(reader, [junk, wavHeader(FMT), Buffer.from([1, 1])]);
   assert.deepEqual([...pcm], [1, 1]);
 });

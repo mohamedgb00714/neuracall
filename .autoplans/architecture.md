@@ -14,4 +14,4 @@ Describe major system components and their interactions.
 
 ---
 
-*Managed by autoplans.dev*
+_Managed by autoplans.dev_
