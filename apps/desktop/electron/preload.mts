@@ -1,4 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { RedactedSettings } from "./service/settings.js";
+import type { AutopilotStatus } from "./service/autopilot.js";
 
 interface TurnMsg {
   key: { deviceId: string; channelId: string };
@@ -59,6 +61,12 @@ interface AutopilotStatusMsg {
   degraded: string[];
   llmConfigured: boolean;
   ttsConfigured: boolean;
+  /**
+   * The AssemblyAI Voice Agent is handling the conversation, which makes the
+   * two flags above irrelevant rather than merely false — it supplies the reply
+   * and the voice itself.
+   */
+  voiceAgent: boolean;
   injection: "off" | "sink" | "unavailable";
   activeCalls: number;
   handled: number;
@@ -159,6 +167,14 @@ interface RedactedSettingsMsg {
     voice: string;
     baseUrl: string;
   };
+  voiceAgent: {
+    enabled: boolean;
+    /** A stored agent's uuid, or "" to configure it inline. */
+    agentId: string;
+    voice: string;
+    greeting: string;
+    systemPrompt: string;
+  };
   audio: { captureSource: string; injectSink: string };
   autopilot: {
     maxCallMs: number;
@@ -167,6 +183,24 @@ interface RedactedSettingsMsg {
     healthPort: number | null;
   };
 }
+
+/**
+ * The two interfaces above restate types that belong to the main process,
+ * because the preload bundle must not pull the service graph into itself.
+ * A restatement is only safe if drift is a compile error rather than a habit —
+ * `voiceAgent` was added to both real types and to neither mirror, and nothing
+ * complained, because these shapes only ever meet `ipcRenderer.invoke`, whose
+ * return type is `any`.
+ *
+ * These assertions close that. `import type` is erased entirely, so nothing
+ * from the service reaches the emitted preload.
+ */
+type Mirrors<Msg, Real> = [Msg] extends [Real] ? ([Real] extends [Msg] ? true : never) : never;
+
+const _redactedSettingsMirrorIsExact: Mirrors<RedactedSettingsMsg, RedactedSettings> = true;
+const _autopilotStatusMirrorIsExact: Mirrors<AutopilotStatusMsg, AutopilotStatus> = true;
+void _redactedSettingsMirrorIsExact;
+void _autopilotStatusMirrorIsExact;
 
 interface ProbeResultMsg {
   ok: boolean;
