@@ -22,6 +22,7 @@ import {
 } from "@neuracall/scrcpy-bridge";
 import { DeviceAudioCapture, type CaptureSession } from "./capture.js";
 import { Autopilot, type AutopilotStatus } from "./autopilot.js";
+import { WhatsAppTextService, type WhatsAppTextStatus } from "./whatsappText.js";
 import {
   buildAppConfig,
   defaultSettings,
@@ -70,6 +71,7 @@ export interface CaptureUpdate extends CaptureSession {
  *  - "call-state" (deviceId, CallState)   telephony poll
  *  - "capture" (CaptureUpdate)            scrcpy capture started/exited
  *  - "capture-log" (deviceId, line, isError)
+ *  - "whatsapp-text" (line, isError)      the text bridge's webhook/agent log
  */
 export class Runtime extends EventEmitter {
   /**
@@ -90,6 +92,13 @@ export class Runtime extends EventEmitter {
   private readonly callStates = new Map<string, CallState>();
   private readonly opts: RuntimeOptions;
   private autopilotInstance: Autopilot | null = null;
+  /**
+   * The WhatsApp text bridge. Built eagerly because building it opens nothing —
+   * it reads the environment and can then report *why* it is off — and started
+   * with the runtime only when credentials are actually present.
+   */
+  private whatsappText: WhatsAppTextService;
+  private whatsappTextStarted = false;
 
   constructor(config: AppConfig, opts: RuntimeOptions = {}) {
     super();
@@ -143,6 +152,8 @@ export class Runtime extends EventEmitter {
     this.devices.on("device", (device) => this.emit("device", device));
     this.devices.on("adb-state", (id, state) => this.emit("adb-state", id, state));
     this.devices.on("phase", (id, phase) => this.emit("phase", id, phase));
+
+    this.whatsappText = this.buildWhatsAppText();
   }
 
   /** The resolved AssemblyAI/LLM/TTS config currently in force. */
@@ -171,6 +182,12 @@ export class Runtime extends EventEmitter {
       this.callTimer = setInterval(() => void this.pollCallStates(), this.callPollIntervalMs);
       this.callTimer.unref?.();
     }
+    // Text is answered from the moment the app is up, unlike the autopilot:
+    // replying to a message nobody has to pick up is not the outward-facing
+    // step that answering a ringing phone is. `start()` never rejects, and does
+    // nothing at all when the feature is unconfigured.
+    this.whatsappTextStarted = true;
+    void this.whatsappText.start();
   }
 
   /** Present list of adb-attached devices. */
@@ -257,6 +274,34 @@ export class Runtime extends EventEmitter {
     return this.autopilot.status();
   }
 
+  // ------------------------------------------------------- whatsapp text
+
+  /** Whether the text bridge is listening, and what is stopping it if not. */
+  whatsappTextStatus(): WhatsAppTextStatus {
+    return this.whatsappText.status();
+  }
+
+  /**
+   * The text bridge reads its credentials from the environment, but its brain
+   * comes from the settings (LLM key and model), so it is rebuilt alongside the
+   * Autopilot — a key added in the UI must reach text as well as voice.
+   */
+  private buildWhatsAppText(): WhatsAppTextService {
+    return new WhatsAppTextService({
+      config: this.appConfig,
+      ...(this.settings.llm.systemPrompt ? { systemPrompt: this.settings.llm.systemPrompt } : {}),
+      ...(this.settings.llm.baseUrl ? { llmBaseUrl: this.settings.llm.baseUrl } : {}),
+      onLog: (line, isError) => {
+        this.emit("whatsapp-text", line, isError === true);
+        // Also to the app log: main.ts wires the runtime's events to the
+        // renderer and does not know this one, so the event alone would be
+        // shouted into an empty room.
+        if (isError) console.warn(`[whatsapp-text] ${line}`);
+        else console.info(`[whatsapp-text] ${line}`);
+      },
+    });
+  }
+
   /**
    * Whether new settings can be applied right now.
    *
@@ -284,6 +329,15 @@ export class Runtime extends EventEmitter {
     this.assertReloadable();
     this.settings = settings;
     this.applyConfig(settings);
+
+    // Rebuilt for the same reason the Autopilot is: it holds an LLM client
+    // built from the old key and model, and a settings change that never
+    // reaches text is the silently-ignored section this class has been bitten
+    // by before.
+    const running = this.whatsappTextStarted;
+    await this.whatsappText.stop();
+    this.whatsappText = this.buildWhatsAppText();
+    if (running) void this.whatsappText.start();
 
     const previous = this.autopilotInstance;
     if (!previous) return; // never built; the next `get autopilot` uses the new settings
@@ -493,6 +547,9 @@ export class Runtime extends EventEmitter {
     // Stop answering new calls and hang up anything in flight before the
     // sessions below are terminated, so no call is left mid-teardown.
     await this.autopilotInstance?.shutdown();
+    this.whatsappTextStarted = false;
+    // Closes the webhook port and lets the replies already in flight finish.
+    await this.whatsappText.stop();
     this.capture.stopAll();
     this.devices.stop();
     await this.manager.closeAll("shutdown");
