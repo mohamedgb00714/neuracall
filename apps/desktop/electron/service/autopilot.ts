@@ -221,7 +221,7 @@ export class Autopilot extends EventEmitter {
 
     mkdirSync(opts.dataDir, { recursive: true, mode: 0o700 });
 
-    // SQLite needs Node 22+, and Electron pins its own Node (31 ships Node 20).
+    // SQLite needs Node 22+, and Electron pins its own Node (37 ships 22.21).
     // Where it is missing, calls still have to be recorded — so the append-only
     // JSONL store takes over and only the contact/history queries are lost.
     this.crm = sqliteAvailable()

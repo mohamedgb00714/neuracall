@@ -26,7 +26,7 @@ Be straight about this before you plan anything around it.
 | Speak: turn that reply into audio                                                | **Works** via the AssemblyAI Voice Agent — transcription, reply and voice over one socket on the key you already have. On the composed path, `TtsClient` still needs a provider or it stays `SilentTts` |
 | **Make the caller hear it**                                                      | **Needs a transport you set up yourself** — see below                                                                                                                                                   |
 | Desktop app running the full answer→reply loop                                   | **Works**, opt-in. Autopilot is off until an operator turns it on, and answers inbound calls only                                                                                                       |
-| CRM / contacts / SQLite history                                                  | **Works** where SQLite exists; falls back to append-only JSONL on runtimes without `node:sqlite`                                                                                                        |
+| CRM / contacts / SQLite history                                                  | **Works.** Electron 37 bundles Node 22, so `node:sqlite` is there; the append-only JSONL store remains the fallback for any runtime without it                                                          |
 
 ### The limitation that matters
 
@@ -130,7 +130,7 @@ neuracall/
 │   ├── orchestrator/    the call lifecycle: answer → capture → STT → agent → teardown
 │   ├── agent/           the brain: LLM + TTS ports, conversation state, barge-in
 │   └── e2e/             the whole stack against fakes — no device, no key, no spend
-├── apps/desktop/        Electron 31 + Vite + React control centre
+├── apps/desktop/        Electron 37 + Vite + React control centre
 ├── scripts/             adb bootstrap, live smoke tests
 └── docs/                the four documents above
 ```

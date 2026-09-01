@@ -25,14 +25,14 @@ transport you set up yourself ([AUDIO-ABI.md](AUDIO-ABI.md)).
 
 ## 1. Prerequisites
 
-| Requirement    | Version                        | Why                                                                                                                                 |
-| -------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Node.js        | **>= 20** (`engines`)          | Electron 31 bundles Node 20.18 for the main process. Do not use newer APIs in `apps/desktop/electron/**` or in anything it imports. |
-| npm            | 10+                            | The repo is npm workspaces; `npm install` at the root installs everything.                                                          |
-| `adb`          | Android platform-tools         | Device discovery, call control, WhatsApp detection. Must be on `PATH` (or set `ADB=/path/to/adb` for the shell scripts).            |
-| `scrcpy`       | **>= 3.x** — verified on 3.3.4 | Audio capture. The `voice-call*` and `mic-*` sources need the 3.1+ line; older 1.x/2.x builds from distro repos will not work.      |
-| AssemblyAI key | –                              | <https://www.assemblyai.com/dashboard/api-keys>. Raw key, no `Bearer` prefix.                                                       |
-| Android phone  | 11+ recommended                | scrcpy audio forwarding needs Android 11+. Developed against a realme RMX3624 on Android 13.                                        |
+| Requirement    | Version                        | Why                                                                                                                                                                                                                                               |
+| -------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Node.js        | **>= 20** (`engines`)          | Electron 37 bundles Node 22.21 for the main process, so `node:sqlite` is available there and the contacts database is live. The repo itself still supports Node 20, so packages outside `apps/desktop/electron/**` must not rely on Node 22 APIs. |
+| npm            | 10+                            | The repo is npm workspaces; `npm install` at the root installs everything.                                                                                                                                                                        |
+| `adb`          | Android platform-tools         | Device discovery, call control, WhatsApp detection. Must be on `PATH` (or set `ADB=/path/to/adb` for the shell scripts).                                                                                                                          |
+| `scrcpy`       | **>= 3.x** — verified on 3.3.4 | Audio capture. The `voice-call*` and `mic-*` sources need the 3.1+ line; older 1.x/2.x builds from distro repos will not work.                                                                                                                    |
+| AssemblyAI key | –                              | <https://www.assemblyai.com/dashboard/api-keys>. Raw key, no `Bearer` prefix.                                                                                                                                                                     |
+| Android phone  | 11+ recommended                | scrcpy audio forwarding needs Android 11+. Developed against a realme RMX3624 on Android 13.                                                                                                                                                      |
 
 For **injection** (the agent's voice reaching the caller) you additionally need
 one of: a working BlueZ/HFP stack and a phone paired to the host as a hands-free
