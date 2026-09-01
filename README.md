@@ -27,6 +27,7 @@ Be straight about this before you plan anything around it.
 | **Make the caller hear it**                                                      | **Needs a transport you set up yourself** — see below                                                                                                                                                   |
 | Desktop app running the full answer→reply loop                                   | **Works**, opt-in. Autopilot is off until an operator turns it on, and answers inbound calls only                                                                                                       |
 | CRM / contacts / SQLite history                                                  | **Works.** Electron 37 bundles Node 22, so `node:sqlite` is there; the append-only JSONL store remains the fallback for any runtime without it                                                          |
+| Answer WhatsApp **text** on the same number (Cloud API)                          | **Works**, opt-in. Inert with no `WHATSAPP_*` credentials — it binds no port at all. Needs a Meta app and a webhook URL you expose yourself; the listener is loopback by default                        |
 
 ### The limitation that matters
 
