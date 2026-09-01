@@ -94,6 +94,15 @@ export interface OrchestratorOptions {
    * docs/AUDIO-ABI.md.
    */
   injectorFor?: (deviceId: string, channelId: ChannelKind) => AudioInjector;
+  /**
+   * Answer a VoIP call by tapping its in-app accept button.
+   *
+   * Required for WhatsApp and friends: they do not respond to the cellular
+   * KEYCODE_CALL the call controller sends. Omit it and those channels fall
+   * back to the keyevent, which rings out — the orchestrator says so on the
+   * "error" channel rather than failing silently.
+   */
+  answerVoip?: (deviceId: string, channelId: ChannelKind) => Promise<void>;
   /** The conversational brain. */
   agent: CallAgent;
   /** Where call records go. */
@@ -319,6 +328,37 @@ export class Orchestrator extends EventEmitter {
     return snapshot(record);
   }
 
+  /**
+   * Answer the call the way this channel is actually answered.
+   *
+   * `KEYCODE_CALL` is the *cellular* gesture. WhatsApp, Telegram, Signal and
+   * every other VoIP app ignore it completely — their accept control is a
+   * button in the app's own UI. For a long time this method did not exist and
+   * every channel got the keyevent, so a WhatsApp call was "answered" by
+   * pressing a key nothing was listening to: the phone rang out, the caller got
+   * voicemail, and nothing anywhere reported a failure. It was found only by
+   * looking at a handset and seeing four missed calls.
+   *
+   * `answerVoip` is optional so an embedder without UI automation still gets
+   * the old behaviour rather than a crash — but on those channels it will not
+   * work, which is why the fallback says so.
+   */
+  private async answer(active: ActiveCall, channel: ChannelKind): Promise<void> {
+    if (channel === "cellular" || !this.opts.answerVoip) {
+      if (channel !== "cellular") {
+        this.emit(
+          "error",
+          `answering a ${channel} call with the cellular keyevent, which VoIP apps ignore — ` +
+            "wire OrchestratorOptions.answerVoip to tap the in-app accept button",
+          active.record.callId,
+        );
+      }
+      await active.controller.answer();
+      return;
+    }
+    await this.opts.answerVoip(active.record.deviceId, channel);
+  }
+
   /** The happy path. Anything thrown here lands in the caller's catch. */
   private async runCall(active: ActiveCall, channel: ChannelKind): Promise<void> {
     const { record, machine } = active;
@@ -327,9 +367,9 @@ export class Orchestrator extends EventEmitter {
     this.opts.devices.reportIncomingCall(record.deviceId, channel);
     await this.persist(active);
 
-    await active.controller.answer();
+    await this.answer(active, channel);
     record.answeredAt = this.now();
-    machine.to("answered", "answered via call controller");
+    machine.to("answered", "answered");
     this.opts.devices.setPhase(record.deviceId, "in-call");
     await this.persist(active);
 

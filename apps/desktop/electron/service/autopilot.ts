@@ -12,6 +12,7 @@ import {
   AdbCallChannelDetector,
   AndroidCallController,
   DeviceManager,
+  VoipAnswerer,
   type CommandRunner,
 } from "@neuracall/device-manager";
 import type { ScrcpyAudioSource } from "@neuracall/scrcpy-bridge";
@@ -247,6 +248,16 @@ export class Autopilot extends EventEmitter {
     this.orchestrator = new Orchestrator({
       devices: opts.devices,
       controllerFor: (deviceId) => new AndroidCallController(opts.runner, deviceId),
+      // WhatsApp and the other VoIP apps ignore the cellular KEYCODE_CALL the
+      // controller sends, so their calls have to be accepted by tapping the
+      // button in the app. Without this a WhatsApp call rings out and is
+      // recorded as missed, with nothing reporting a failure.
+      answerVoip: (deviceId, channelId) =>
+        new VoipAnswerer(opts.runner, {
+          onStep: (step) => this.emit("error", `answering ${channelId}: ${step}`, deviceId),
+        })
+          .answer(deviceId, channelId)
+          .then(() => undefined),
       detector: new AdbCallChannelDetector(opts.runner),
       sessions: this.voiceAgent ?? opts.sessions,
       capture: new ScrcpyAudioCapture({

@@ -7,6 +7,7 @@ import {
   isAnswerLabel,
   isAnswerNode,
   isDeclineLabel,
+  isMessageReplyLabel,
   supportsVoipAnswer,
 } from "../src/voipAnswerer.js";
 import { nodeCentre } from "../src/voipDialer.js";
@@ -127,6 +128,132 @@ for (const [language, accept, decline] of [
     assert.deepEqual(result.tappedAt, ACCEPT_CENTRE);
   });
 }
+
+test("a label that reads as accept AND as decline is not accept", () => {
+  // The swipe control carries one description covering both gestures. Both of
+  // these match an accept pattern outright, so only the decline veto keeps them
+  // from being tapped — delete it and this test is the one that goes red.
+  for (const slider of [
+    "Swipe up to answer, swipe down to decline",
+    "Faites glisser vers le haut pour répondre, vers le bas pour refuser",
+    "Nach oben wischen zum Annehmen, nach unten zum Ablehnen",
+  ]) {
+    assert.equal(isDeclineLabel(slider), true, slider);
+    assert.equal(
+      isAnswerLabel(slider),
+      false,
+      `a two-gesture slider was read as accept: ${slider}`,
+    );
+  }
+});
+
+for (const [language, reply] of [
+  ["English", "Reply"],
+  ["French", "Répondre par SMS"],
+  ["French", "Répondre par message"],
+  ["German", "Mit Nachricht antworten"],
+  ["Spanish", "Responder con mensaje"],
+  ["Portuguese", "Responder com mensagem"],
+  ["Italian", "Rispondi con un messaggio"],
+  ["Arabic", "الرد برسالة"],
+] as const) {
+  test(`${language} quick reply "${reply}" is never mistaken for accept`, () => {
+    // Android's telecom ringing screen and WhatsApp's put this control on the
+    // accept row. It rejects the call and sends a canned text, and its label is
+    // the accept verb plus a noun.
+    assert.equal(isMessageReplyLabel(reply), true, reply);
+    assert.equal(isAnswerLabel(reply), false, `quick reply read as accept: ${reply}`);
+  });
+}
+
+test("the quick-reply button listed before accept is not the one tapped", async () => {
+  // Dump order is decline, quick-reply, accept — the order the ringing screen
+  // lays them out left to right.
+  const runner = fakeRunner(
+    [
+      '<node clickable="true" content-desc="Refuser" bounds="[120,1400][280,1560]"/>',
+      '<node clickable="true" content-desc="Répondre par SMS" bounds="[280,1400][440,1560]"/>',
+      '<node clickable="true" content-desc="Accepter" bounds="[440,1400][600,1560]"/>',
+    ].join(""),
+  );
+  const answerer = new VoipAnswerer(runner, { skipWake: true, sleep: async () => undefined });
+
+  const result = await answerer.answer("SERIAL", "whatsapp");
+
+  assert.equal(result.buttonLabel, "Accepter");
+  assert.deepEqual(result.tappedAt, ACCEPT_CENTRE);
+  assert.ok(
+    // Centre of the quick-reply node [280,1400][440,1560].
+    !runner.commands.some((c) => c.join(" ") === "shell input tap 360 1480"),
+    "tapped the quick-reply button, which rejects the call and texts the caller",
+  );
+});
+
+test("a package name containing a message word does not block its accept button", () => {
+  // "messenger", "messaging" and "securesms" are calling apps, not quick replies.
+  for (const id of [
+    "org.telegram.messenger:id/accept_btn",
+    "org.thoughtcrime.securesms:id/accept_call",
+    "com.google.android.apps.messaging:id/answer_button",
+  ]) {
+    assert.equal(isMessageReplyLabel(id), false, id);
+    assert.equal(isAnswerLabel(id), true, `accept id was vetoed: ${id}`);
+  }
+});
+
+test("_btn resource ids are read, both ways", () => {
+  // "_" is a word character on both sides, so \b reaches neither of these.
+  assert.equal(isDeclineLabel("com.whatsapp:id/decline_btn"), true);
+  assert.equal(isDeclineLabel("com.foo:id/reject_btn"), true);
+  assert.equal(isAnswerLabel("com.foo:id/accept_btn"), true);
+  assert.equal(isAnswerLabel("org.telegram.messenger:id/answer_btn"), true);
+  assert.equal(isAnswerLabel("com.whatsapp:id/decline_btn"), false);
+});
+
+test("Italian Riaggancia is a decline, with or without the infinitive ending", () => {
+  assert.equal(isDeclineLabel("Riaggancia"), true);
+  assert.equal(isDeclineLabel("Riagganciare"), true);
+});
+
+test("a row wrapping both buttons is not tapped at its centre", async () => {
+  // A clickable container carrying an accept-ish id, with both buttons inside
+  // it: its centre is the gap between them, and answering would report success
+  // having pressed nothing.
+  const runner = fakeRunner(
+    [
+      '<node clickable="true" resource-id="com.whatsapp:id/accept_call_layout" bounds="[0,1300][720,1700]">',
+      '<node clickable="true" content-desc="Refuser" bounds="[120,1400][280,1560]"/>',
+      '<node clickable="true" content-desc="Accepter" bounds="[440,1400][600,1560]"/>',
+      "</node>",
+    ].join(""),
+  );
+  const answerer = new VoipAnswerer(runner, { skipWake: true, sleep: async () => undefined });
+
+  const result = await answerer.answer("SERIAL", "whatsapp");
+
+  assert.equal(result.buttonLabel, "Accepter");
+  assert.deepEqual(result.tappedAt, ACCEPT_CENTRE);
+  assert.ok(
+    // Centre of the wrapper [0,1300][720,1700].
+    !runner.commands.some((c) => c.join(" ") === "shell input tap 360 1500"),
+    "tapped the wrapper's centre, which is between the two buttons",
+  );
+});
+
+test("an asymmetric row wrapper does not put the tap inside decline", () => {
+  // Decline owns the left half here, so the wrapper's centre is its own edge.
+  const button = findAnswerButton(
+    [
+      '<node clickable="true" resource-id="com.foo:id/call_accept_row" bounds="[0,1400][720,1560]">',
+      '<node clickable="true" content-desc="Refuser" bounds="[0,1400][360,1560]"/>',
+      '<node clickable="true" content-desc="Accepter" bounds="[360,1400][720,1560]"/>',
+      "</node>",
+    ].join(""),
+  );
+  assert.ok(button, "the accept button nested in the row was not found");
+  assert.equal(button.contentDesc, "Accepter");
+  assert.deepEqual(nodeCentre(button), { x: 540, y: 1480 });
+});
 
 test("WhatsApp's resource ids answer a screen whose labels are unreadable", () => {
   // Ids are a hint, not the only route — but an unlabelled button still has one.

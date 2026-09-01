@@ -19,7 +19,8 @@
  *    excludes video before matching voice. On a ringing screen Accept and
  *    Decline sit side by side, so a loose match does not merely fail — it hangs
  *    up on a real customer. See DECLINE_HINTS for why the pairs are so easy to
- *    confuse.
+ *    confuse, and MESSAGE_REPLY_HINTS for the third control on that row, which
+ *    rejects the call while its label is built from the accept verb itself.
  *  - An unmatched locale fails loudly with the labels it did see. A silent
  *    no-op is the bug this file exists to fix, so "found nothing, did nothing,
  *    reported success" must be unreachable.
@@ -63,7 +64,7 @@ const DECLINE_HINTS: readonly RegExp[] = [
   /\bcolgar\b/i,
   /\bignorar\b/i,
   /\brifiuta(re)?\b/i,
-  /\briagganciare?\b/i,
+  /\briaggancia(re)?\b/i,
   /\brecusar\b/i,
   /\brejeitar\b/i,
   /\bdesligar\b/i,
@@ -73,15 +74,51 @@ const DECLINE_HINTS: readonly RegExp[] = [
   /إنهاء/,
   /تجاهل/,
   // Resource ids are not localised. "_" counts as a word character, so \b would
-  // not fire inside "decline_call" — these are deliberately unanchored.
+  // not fire inside "decline_call" — these are deliberately unanchored. The
+  // suffix alternation must spell "btn" as well as "button": "_" is a word
+  // character both sides, so nothing else in this list reaches "decline_btn".
+  /decline_?b(utto|t)?n/i,
+  /reject_?b(utto|t)?n/i,
   /decline_?call/i,
   /reject_?call/i,
-  /decline_?b(utto)?n/i,
-  /reject_?b(utto)?n/i,
   /btn_decline/i,
   /call_decline/i,
   /hang_?up/i,
   /end_?call/i,
+];
+
+/**
+ * Controls that dismiss the call *without* declining it in the app's own words,
+ * and which therefore have their own list: the quick-reply button that Android's
+ * telecom ringing screen and WhatsApp's both place on the accept row. Tapping it
+ * rejects the call and sends a canned text, so it is as costly as decline.
+ *
+ * It is listed separately because the labels are built from the very verbs the
+ * accept patterns match, and only the message noun tells them apart:
+ *
+ *   French     "Répondre par SMS"          vs accept "Répondre"
+ *   German     "Mit Nachricht antworten"   vs accept "Antworten"
+ *   Spanish    "Responder con mensaje"     vs accept "Responder"
+ *   Portuguese "Responder com mensagem"    vs accept "Responder"
+ *   Italian    "Rispondi con un messaggio" vs accept "Rispondi"
+ *   Arabic     "الرد برسالة"                vs accept "الرد"
+ *
+ * The nouns are whole-word anchored so they cannot fire inside a package name:
+ * "messenger", "messaging" and "securesms" all belong to calling apps whose
+ * accept button must still be found.
+ */
+const MESSAGE_REPLY_HINTS: readonly RegExp[] = [
+  /\breply\b/i,
+  /\bsms\b/i,
+  /\bmessages?\b/i,
+  /\bnachricht\b/i,
+  /\bmensaje\b/i,
+  /\bmensagem\b/i,
+  /\bmessaggi[oe]\b/i,
+  /رسالة/,
+  /quick_?reply/i,
+  /reply_?b(utto|t)?n/i,
+  /message_?b(utto|t)?n/i,
 ];
 
 /**
@@ -116,8 +153,8 @@ const ANSWER_HINTS: readonly RegExp[] = [
   // because ids change between app versions without warning.
   /accept_?call/i,
   /answer_?call/i,
-  /accept_?b(utto)?n/i,
-  /answer_?b(utto)?n/i,
+  /accept_?b(utto|t)?n/i,
+  /answer_?b(utto|t)?n/i,
   /btn_accept/i,
   /call_accept/i,
   /voip_?accept/i,
@@ -128,10 +165,20 @@ export function isDeclineLabel(label: string): boolean {
   return DECLINE_HINTS.some((re) => re.test(label));
 }
 
-/** True when a label denotes the accept control and is definitely not decline. */
+/** True when a label denotes the quick-reply control, which rejects the call. */
+export function isMessageReplyLabel(label: string): boolean {
+  return MESSAGE_REPLY_HINTS.some((re) => re.test(label));
+}
+
+/** Every reading that forbids treating a label as accept. */
+function vetoesAnswer(label: string): boolean {
+  return false;
+}
+
+/** True when a label denotes the accept control and nothing else. */
 export function isAnswerLabel(label: string): boolean {
   if (label.trim() === "") return false;
-  if (isDeclineLabel(label)) return false;
+  if (vetoesAnswer(label)) return false;
   return ANSWER_HINTS.some((re) => re.test(label));
 }
 
@@ -156,8 +203,21 @@ export function isDeclineNode(node: UiNode): boolean {
  * refusing to tap costs a missed answer, and tapping costs a hung-up customer.
  */
 export function isAnswerNode(node: UiNode): boolean {
-  if (isDeclineNode(node)) return false;
   return nodeLabels(node).some(isAnswerLabel);
+}
+
+/** True when `outer` strictly encloses `inner`, so a tap on it is ambiguous. */
+function encloses(outer: UiNode, inner: UiNode): boolean {
+  const a = outer.bounds;
+  const b = inner.bounds;
+  const area = (r: UiNode["bounds"]): number => (r.right - r.left) * (r.bottom - r.top);
+  return (
+    a.left <= b.left &&
+    a.top <= b.top &&
+    a.right >= b.right &&
+    a.bottom >= b.bottom &&
+    area(a) > area(b)
+  );
 }
 
 /**
@@ -166,9 +226,18 @@ export function isAnswerNode(node: UiNode): boolean {
  * Selection is by predicate rather than by position, so it does not matter
  * whether decline is listed before accept in the XML — which it often is, since
  * the decline button is usually the left-hand one.
+ *
+ * A candidate that encloses a control it must not press is rejected, because
+ * the tap point is a centre: a clickable *row* carrying an accept-ish
+ * resource-id — "accept_call_layout" wrapping both buttons is a real WhatsApp
+ * shape — has its centre in the gap between accept and decline, or inside
+ * decline when the row is not symmetric. Skipping the wrapper lets the search
+ * reach the real button nested inside it.
  */
 export function findAnswerButton(dump: string): UiNode | null {
-  return parseClickableNodes(dump).find(isAnswerNode) ?? null;
+  const nodes = parseClickableNodes(dump).reverse();
+  const ambiguous = nodes.filter((n) => nodeLabels(n).some(vetoesAnswer));
+  return nodes.find((n) => isAnswerNode(n) && !ambiguous.some((bad) => encloses(n, bad))) ?? null;
 }
 
 /**
