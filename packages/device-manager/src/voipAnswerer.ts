@@ -172,7 +172,7 @@ export function isMessageReplyLabel(label: string): boolean {
 
 /** Every reading that forbids treating a label as accept. */
 function vetoesAnswer(label: string): boolean {
-  return false;
+  return isDeclineLabel(label) || isMessageReplyLabel(label);
 }
 
 /** True when a label denotes the accept control and nothing else. */
@@ -203,6 +203,7 @@ export function isDeclineNode(node: UiNode): boolean {
  * refusing to tap costs a missed answer, and tapping costs a hung-up customer.
  */
 export function isAnswerNode(node: UiNode): boolean {
+  if (nodeLabels(node).some(vetoesAnswer)) return false;
   return nodeLabels(node).some(isAnswerLabel);
 }
 
@@ -235,7 +236,7 @@ function encloses(outer: UiNode, inner: UiNode): boolean {
  * reach the real button nested inside it.
  */
 export function findAnswerButton(dump: string): UiNode | null {
-  const nodes = parseClickableNodes(dump).reverse();
+  const nodes = parseClickableNodes(dump);
   const ambiguous = nodes.filter((n) => nodeLabels(n).some(vetoesAnswer));
   return nodes.find((n) => isAnswerNode(n) && !ambiguous.some((bad) => encloses(n, bad))) ?? null;
 }

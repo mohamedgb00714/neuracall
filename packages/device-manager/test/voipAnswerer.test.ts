@@ -70,7 +70,8 @@ test("accept is told apart from the decline button beside it", () => {
 
 test("a node whose labels disagree is never treated as accept", () => {
   // One label saying "decline" disqualifies the whole node: a mis-tap here
-  // hangs up on a real customer, a missed match merely fails loudly.
+  // hangs up on a real customer, a missed match merely fails loudly. Judged
+  // per-label instead, the accept-ish id alone would carry each of these.
   assert.equal(
     isAnswerNode({
       contentDesc: "Refuser",
@@ -79,6 +80,17 @@ test("a node whose labels disagree is never treated as accept", () => {
       bounds: { left: 0, top: 0, right: 10, bottom: 10 },
     }),
     false,
+    "a node described as Refuser was treated as accept",
+  );
+  assert.equal(
+    isAnswerNode({
+      contentDesc: "Répondre par SMS",
+      text: "",
+      resourceId: "com.android.dialer:id/accept_btn",
+      bounds: { left: 0, top: 0, right: 10, bottom: 10 },
+    }),
+    false,
+    "a node described as quick reply was treated as accept",
   );
 });
 
