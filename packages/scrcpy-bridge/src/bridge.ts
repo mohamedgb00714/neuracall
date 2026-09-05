@@ -135,6 +135,7 @@ export class ScrcpyBridge extends EventEmitter {
   private formatSent = false;
   private finished = false;
   private lastDataAt = 0;
+  private sinkEnded = false;
   private fifo: { socket: Socket; path: string } | null = null;
   private tail: { timer: NodeJS.Timeout; finish: () => void } | null = null;
 
@@ -188,6 +189,7 @@ export class ScrcpyBridge extends EventEmitter {
     this.reader.reset();
     this.formatSent = false;
     this.finished = false;
+    this.sinkEnded = false;
     this.lastDataAt = 0;
 
     if (this.transport === "fifo") {
@@ -230,7 +232,13 @@ export class ScrcpyBridge extends EventEmitter {
       if (this.fifo) this.drainFifoThen(finish);
       else finish();
     });
-    proc.on("error", (err) => this.emit("error", err.message));
+    proc.on("error", (err) => {
+      // A spawn failure (e.g. scrcpy binary missing) may emit "error" without
+      // a matching "close"; clear the handle so a restart does not throw
+      // "already running" for a process that never started.
+      if (proc === this.proc) this.proc = null;
+      this.emit("error", err.message);
+    });
   }
 
   /** Stop scrcpy (SIGTERM — it finalises the recording and exits cleanly). */
@@ -307,7 +315,13 @@ export class ScrcpyBridge extends EventEmitter {
       }
       this.fifo = null;
     }
-    this.opts.sink.end();
+    // A bridge can be started again after scrcpy exits, and the same sink is
+    // reused across runs. end() must fire once per run, not once ever — calling
+    // it again would be an error for a stream-like sink.
+    if (!this.sinkEnded) {
+      this.sinkEnded = true;
+      this.opts.sink.end();
+    }
     this.emit("exit", result);
   }
 

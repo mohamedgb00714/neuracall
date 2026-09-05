@@ -126,16 +126,32 @@ export class RealtimeSessionManager extends EventEmitter {
     this.drainQueue();
   }
 
+  /**
+   * Hand a single freed slot to one queued waiter.
+   *
+   * This must grant at most one caller per call: a granted waiter adds its
+   * session asynchronously (later microtask), so `sessions.size` is not yet
+   * higher when this loop runs. A naive `while (sessions.size < maxConcurrent)`
+   * here would pop *every* waiter on one release and re-create the 3009
+   * concurrency over-limit the queue exists to avoid. Each releaseSlot()
+   * corresponds to exactly one freed slot, so one pop balances the books.
+   */
   private drainQueue(): void {
-    while (this.queue.length > 0 && this.sessions.size < this.maxConcurrent) {
-      const next = this.queue.shift();
-      next?.();
-    }
+    if (this.queue.length === 0) return;
+    if (this.sessions.size >= this.maxConcurrent) return;
+    const next = this.queue.shift();
+    this.queued = Math.max(0, this.queued - 1);
+    next?.();
   }
 
   /** Get an open stream by key, or undefined. */
   get(key: SessionKey): RealtimeStream | undefined {
     return this.sessions.get(sessionMapKey(key))?.stream;
+  }
+
+  /** True when a session is currently open for this key. */
+  isOpen(key: SessionKey): boolean {
+    return this.sessions.has(sessionMapKey(key));
   }
 
   /** Close a single session, always sending Terminate. */

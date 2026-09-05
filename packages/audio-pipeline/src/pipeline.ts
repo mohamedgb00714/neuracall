@@ -116,7 +116,8 @@ export class AudioPipeline {
     const start = active && !this.inUtterance;
     if (start) this.inUtterance = true;
 
-    if (active || this.emitSilence) {
+    const shouldEmit = active || this.emitSilence;
+    if (shouldEmit) {
       const chunk: AudioChunk = {
         sampleRate: this.targetSampleRate,
         pcm: floatToPcm16([frame]),
@@ -125,9 +126,14 @@ export class AudioPipeline {
       };
       this.lastEmitted = chunk;
       this.out.write(chunk);
-    } else if (this.inUtterance && !this.vad.isActive) {
-      // Silence has returned and the utterance is over; the last chunk emitted
-      // is the tail of the utterance.
+    }
+
+    // An utterance ends when this frame carried no speech and the VAD hangover
+    // has elapsed. This must run independently of chunk emission: with
+    // emitSilence=true (the default) every frame is emitted and a
+    // `else if (!active)` would be unreachable, leaving inUtterance stuck true
+    // forever and consumers seeing one unbroken, never-ending utterance.
+    if (this.inUtterance && !active && !this.vad.isActive) {
       if (this.lastEmitted && !this.lastEmitted.utteranceEnd) {
         this.lastEmitted.utteranceEnd = true;
       }

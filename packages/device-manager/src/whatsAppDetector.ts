@@ -86,12 +86,16 @@ export class AdbCallChannelDetector implements CallChannelDetector {
       };
     }
 
-    // MODE_IN_COMMUNICATION plus the owning package identifies a VoIP call on
-    // *any* app without knowing anything about that app's UI. An owner missing
-    // from the registry still counts as a call — it reports the generic
-    // "voip" channel rather than being dropped.
+    // MODE_IN_COMMUNICATION identifies a VoIP call on *any* app without knowing
+    // anything about that app's UI. An owner missing from the registry still
+    // counts as a call — it reports the generic "voip" channel rather than
+    // being dropped. The owner must NOT gate presence: some OEM builds (verified
+    // on the Realme RMX3624 dev handset) report MODE_IN_COMMUNICATION with a
+    // blank Mode-owner / mModeOwnerPid 0, and requiring a non-empty owner here
+    // would silently drop every real call on those devices.
     const audio = parseAudioModeState(await this.dump(endpoint, ["dumpsys", "audio"]));
-    const audioCall = audio.mode === "in_communication" && audio.owner !== "";
+    const audioCall = audio.mode === "in_communication";
+    const audioOwner = audio.owner || "voip";
 
     const foreground = await this.foregroundApp(endpoint);
     const foregroundChannel = channelForPackage(foreground);
@@ -106,15 +110,15 @@ export class AdbCallChannelDetector implements CallChannelDetector {
         present: true,
         channel: foregroundChannel,
         stage: "ringing",
-        ownerPackage: audioCall ? audio.owner : foreground,
+        ownerPackage: audioCall ? audioOwner : foreground,
       };
     }
     if (audioCall) {
       return {
         present: true,
-        channel: callChannelForOwner(audio.owner),
+        channel: callChannelForOwner(audioOwner),
         stage: "in-progress",
-        ownerPackage: audio.owner,
+        ownerPackage: audioOwner,
       };
     }
     return { present: false, channel: null };

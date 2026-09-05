@@ -75,6 +75,8 @@ export interface SttSessionManager {
     opts: { params: RealtimeParams },
   ): Promise<SttStream>;
   close(key: { deviceId: string; channelId: string }, reason?: string): Promise<void>;
+  /** True when a session is already open for this key (pre-flight duplicate check). */
+  isOpen?(key: { deviceId: string; channelId: string }): boolean;
 }
 
 export interface OrchestratorOptions {
@@ -236,7 +238,13 @@ export class Orchestrator extends EventEmitter {
       try {
         const detected = await this.opts.detector.detect(device.id);
         if (detected.present && detected.channel) {
-          void this.handleIncomingCall(device.id, detected.channel);
+          // Fire-and-forget, but never swallow a rejection: an overlapping
+          // poll() tick can detect the same device a second time, and
+          // handleIncomingCall throws for a device already on a call. An
+          // unhandled rejection would take the whole process down.
+          this.handleIncomingCall(device.id, detected.channel).catch((err: unknown) => {
+            this.emit("error", toError(err), device.id);
+          });
         }
       } catch (err) {
         this.emit("error", toError(err));
@@ -366,6 +374,16 @@ export class Orchestrator extends EventEmitter {
     machine.to("incoming", `inbound ${channel} call detected`);
     this.opts.devices.reportIncomingCall(record.deviceId, channel);
     await this.persist(active);
+
+    // Pre-flight the STT session key before answering. If that key is already
+    // held — a manual Listen session on this device/channel — answering and
+    // then opening would collide ("Session already open") and tear the call
+    // back down: the caller would hear answer-then-drop. Ring out instead.
+    if (this.opts.sessions.isOpen?.({ deviceId: record.deviceId, channelId: channel })) {
+      throw new Error(
+        `session key already held for ${record.deviceId}/${channel}; ringing out instead of answering`,
+      );
+    }
 
     await this.answer(active, channel);
     record.answeredAt = this.now();
@@ -618,6 +636,10 @@ export class Orchestrator extends EventEmitter {
           }
         } catch (err) {
           this.emit("error", toError(err), active.record.callId);
+          // The device is unreachable (USB pull / WiFi drop / adb crash) — the
+          // call cannot continue and the slot must not sit orphaned until the
+          // stall watchdog eventually fires. Tear it down now.
+          this.requestEnd(active, "failed", "device unreachable");
         }
       })();
     }, interval);

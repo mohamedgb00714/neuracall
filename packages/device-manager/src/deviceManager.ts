@@ -92,12 +92,16 @@ export class DeviceManager extends EventEmitter {
     for (const id of [...this.devices.keys()]) {
       if (!seen.has(id)) {
         const dev = this.devices.get(id)!;
-        this.devices.set(id, {
+        const updated: Device = {
           ...dev,
           adbState: "offline",
           phase: "offline",
           updatedAt: Date.now(),
-        });
+        };
+        this.devices.set(id, updated);
+        this.emit("device", updated);
+        this.emit("adb-state", id, "offline");
+        this.emit("phase", id, "offline");
       }
     }
   }
@@ -165,7 +169,11 @@ export class DeviceManager extends EventEmitter {
   private markAllOffline(): void {
     const now = Date.now();
     for (const [id, dev] of this.devices) {
-      this.devices.set(id, { ...dev, adbState: "offline", phase: "offline", updatedAt: now });
+      const updated: Device = { ...dev, adbState: "offline", phase: "offline", updatedAt: now };
+      this.devices.set(id, updated);
+      this.emit("device", updated);
+      this.emit("adb-state", id, "offline");
+      this.emit("phase", id, "offline");
     }
   }
 }
