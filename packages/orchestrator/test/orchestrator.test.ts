@@ -881,3 +881,77 @@ test("drain() holds shutdown until an in-flight teardown's record persists", asy
   assert.equal(errors.length, 0, `persist must not fail: ${errors.map((e) => e.message).join("; ")}`);
   await call;
 });
+
+test("the hang-up watch uses hangupState, not the telephony registry, on a voip call", async () => {
+  // Regression: the watch probed the cellular registry, which a WhatsApp call
+  // never touches — it read "idle" while the call was up (or, with a stale
+  // offhook, never saw it end). The channel-aware hook ends the call when its
+  // channel actually goes away.
+  const h = harness();
+  const controller = new FakeCallController();
+  controller.telephony = "offhook"; // the registry says "still on a call" forever
+  let probes = 0;
+  const states: string[] = [];
+  const errors: Error[] = [];
+  const orchestrator = new Orchestrator({
+    devices: h.devices,
+    controllerFor: () => controller,
+    detector: h.detector,
+    sessions: h.stt,
+    capture: h.capture,
+    agent: h.agent,
+    store: h.store,
+    makeCallId: () => CALL_ID,
+    hangupPollMs: 10,
+    answerVoip: async () => undefined,
+    hangupState: async () => {
+      probes += 1;
+      return probes >= 2 ? "idle" : "offhook";
+    },
+  });
+  orchestrator.on("state", (_id: string, s: string) => states.push(s));
+  orchestrator.on("error", (err: Error) => errors.push(err));
+
+  const record = await keepAlive(orchestrator.handleIncomingCall(DEVICE, "whatsapp"));
+
+  assert.equal(record.outcome, "completed", "the call ended once the channel went away");
+  assert.equal(states.at(-1), "ended");
+  assert.ok(probes >= 2, `the hook was consulted, not the registry: ${probes} probes`);
+  assert.equal(errors.length, 0, `unexpected errors: ${errors.map((e) => e.message).join("; ")}`);
+  assert.equal(orchestrator.activeCalls.length, 0, "the device slot was released");
+  // Default teardown still hangs the phone up after the hook said it ended.
+  assert.equal(controller.hungUp, 1);
+});
+
+test("a voip call is ended through endChannelCall instead of the controller keyevent", async () => {
+  // KEYCODE_ENDCALL is ignored by VoIP apps, so the end must go through the
+  // channel-aware hook; the controller must not be used for a WhatsApp call.
+  const h = harness();
+  const calls: Array<[string, string]> = [];
+  const errors: Error[] = [];
+  const orchestrator = new Orchestrator({
+    devices: h.devices,
+    controllerFor: () => h.controller,
+    detector: h.detector,
+    sessions: h.stt,
+    capture: h.capture,
+    agent: h.agent,
+    store: h.store,
+    makeCallId: () => CALL_ID,
+    hangupPollMs: 0,
+    answerVoip: async () => undefined,
+    endChannelCall: async (deviceId, channelId) => {
+      calls.push([deviceId, channelId]);
+    },
+  });
+  orchestrator.on("error", (err: Error) => errors.push(err));
+
+  const call = orchestrator.handleIncomingCall(DEVICE, "whatsapp");
+  await waitFor(() => h.capture.sink !== null, "the call to be in flight");
+  orchestrator.endCall(CALL_ID, "completed", "far end hung up");
+  await keepAlive(call);
+
+  assert.deepEqual(calls, [[DEVICE, "whatsapp"]]);
+  assert.equal(h.controller.hungUp, 0, "the controller keyevent must not end a VoIP call");
+  assert.equal(errors.length, 0, `unexpected errors: ${errors.map((e) => e.message).join("; ")}`);
+});

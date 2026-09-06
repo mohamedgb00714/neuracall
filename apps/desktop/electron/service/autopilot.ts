@@ -14,8 +14,12 @@ import {
   AndroidCallController,
   DeviceManager,
   VoipAnswerer,
+  VoipHangup,
   captureScreen,
   ocrAcceptButton,
+  type CallChannelDetector,
+  type CallState as TelephonyState,
+  type ChannelKind,
   type CommandRunner,
 } from "@neuracall/device-manager";
 import type { ScrcpyAudioSource } from "@neuracall/scrcpy-bridge";
@@ -190,6 +194,7 @@ class TranscribeOnlyAgent implements CallAgent {
  */
 export class Autopilot extends EventEmitter {
   private readonly opts: AutopilotOptions;
+  private readonly detector: CallChannelDetector;
   private readonly orchestrator: Orchestrator;
   private readonly agent: CallAgent;
   /**
@@ -226,6 +231,7 @@ export class Autopilot extends EventEmitter {
   constructor(opts: AutopilotOptions) {
     super();
     this.opts = opts;
+    this.detector = new AdbCallChannelDetector(opts.runner);
 
     // The Voice Agent replaces STT, the LLM and TTS with one socket, so when it
     // is on none of the three needs configuring — that is the whole point of
@@ -347,6 +353,13 @@ this.orchestrator = opts.buildOrchestrator
     return new Orchestrator({
       devices: this.opts.devices,
       controllerFor: (deviceId) => new AndroidCallController(this.opts.runner, deviceId),
+      // The hang-up watch and the hang-up itself must be channel-aware for the
+      // same reason answering is: the cellular controller probes the telephony
+      // registry and presses KEYCODE_ENDCALL, and a WhatsApp call lives in
+      // neither. The detector is the presence source of truth for VoIP, and the
+      // in-app red button is how that call actually ends.
+      hangupState: (deviceId, channelId) => this.hangupState(deviceId, channelId),
+      endChannelCall: (deviceId, channelId) => this.endChannelCall(deviceId, channelId),
       // WhatsApp and the other VoIP apps ignore the cellular KEYCODE_CALL the
       // controller sends, so their calls have to be accepted by tapping the
       // button in the app. Without this a WhatsApp call rings out and is
@@ -367,7 +380,7 @@ this.orchestrator = opts.buildOrchestrator
         })
           .answer(deviceId, channelId)
           .then(() => undefined),
-      detector: new AdbCallChannelDetector(this.opts.runner),
+      detector: this.detector,
       sessions: this.voiceAgent ?? this.opts.sessions,
       capture: new ScrcpyAudioCapture({
         ...(this.opts.audioSource !== undefined ? { audioSource: this.opts.audioSource } : {}),
@@ -395,6 +408,50 @@ this.orchestrator = opts.buildOrchestrator
       ...(this.voiceAgent ? {} : { injectorFor: () => this.buildInjector() }),
       watchIntervalMs: this.opts.pollIntervalMs ?? 1500,
     });
+  }
+
+  /**
+   * How a live call's connectedness is probed for the hang-up watch.
+   *
+   * Cellular reads the telephony registry through the call controller. A VoIP
+   * call never touches it, so its presence comes from the detector — the same
+   * audio-mode / owner-pid / UI signals that decided it was a call in the first
+   * place. A probe that fails reads as "unknown", which the watch treats as
+   * "still connected"; the stall watchdog is the backstop for a wedged call.
+   */
+  private async hangupState(deviceId: string, channelId: ChannelKind): Promise<TelephonyState> {
+    if (channelId === "cellular") {
+      return new AndroidCallController(this.opts.runner, deviceId).callState();
+    }
+    try {
+      const detected = await this.detector.detect(deviceId);
+      return detected.present ? "offhook" : "idle";
+    } catch {
+      return "unknown";
+    }
+  }
+
+  /**
+   * Force the call down when it ends.
+   *
+   * Cellular presses KEYCODE_ENDCALL, which is exactly right. A VoIP call has
+   * to be ended by tapping the in-app hang-up button; if no control can be
+   * found (call already over, unfamiliar label), fall back to the keyevent —
+   * best-effort, like the controller's own hang-up.
+   */
+  private async endChannelCall(deviceId: string, channelId: ChannelKind): Promise<void> {
+    const controller = new AndroidCallController(this.opts.runner, deviceId);
+    if (channelId === "cellular") {
+      await controller.safeHangUp();
+      return;
+    }
+    try {
+      await new VoipHangup(this.opts.runner, {
+        onStep: (step) => this.emit("error", `hanging up ${channelId}: ${step}`, deviceId),
+      }).hangUp(deviceId, channelId);
+    } catch {
+      await controller.safeHangUp();
+    }
   }
 
   /** Counters and gauges for the dashboard and the health endpoint. */

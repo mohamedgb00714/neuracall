@@ -35,6 +35,7 @@ import type {
 import type {
   CallChannelDetector,
   CallController,
+  CallState as TelephonyState,
   ChannelKind,
   Device,
   DevicePhase,
@@ -144,6 +145,27 @@ export interface OrchestratorOptions {
    * or an explicit `endCall()`.
    */
   hangupPollMs?: number;
+  /**
+   * How a live call's connectedness is probed for the hang-up watch.
+   *
+   * Defaults to the call controller's `callState()` — the *cellular*
+   * telephony registry — which is wrong for a VoIP channel: a WhatsApp call
+   * never touches it, so it reads "idle" while the call is actually up (the
+   * watch would end the call seconds after it was answered) or misses the
+   * hang-up entirely. Pass the channel-aware detector here for non-cellular
+   * channels ("present" while the call is up, "idle" once it goes away) and
+   * the watch ends the call when the channel really ends.
+   */
+  hangupState?: (deviceId: string, channelId: ChannelKind) => Promise<TelephonyState>;
+  /**
+   * Force the call down when it ends.
+   *
+   * Defaults to the call controller's `safeHangUp()` (KEYCODE_ENDCALL), which
+   * VoIP apps ignore the same way they ignore KEYCODE_CALL on a ringing
+   * screen. Pass a channel-aware hook (tap the in-app hang-up button for
+   * non-cellular channels) so the phone really leaves the call.
+   */
+  endChannelCall?: (deviceId: string, channelId: ChannelKind) => Promise<void>;
   /** Clock, injectable for tests. */
   now?: () => number;
   /** Generates call ids. Injectable so tests get stable names. */
@@ -637,7 +659,9 @@ export class Orchestrator extends EventEmitter {
     const timer = setInterval(() => {
       void (async () => {
         try {
-          const state = await active.controller.callState();
+          const state = this.opts.hangupState
+            ? await this.opts.hangupState(active.record.deviceId, active.record.channelId)
+            : await active.controller.callState();
           if (state === "idle") {
             this.requestEnd(active, "completed", "far end hung up");
           }
@@ -726,7 +750,13 @@ export class Orchestrator extends EventEmitter {
       ),
     );
 
-    await this.guard(active, "hang up", () => active.controller.safeHangUp());
+    await this.guard(active, "hang up", async () => {
+      if (this.opts.endChannelCall) {
+        await this.opts.endChannelCall(record.deviceId, record.channelId);
+      } else {
+        await active.controller.safeHangUp();
+      }
+    });
     await this.guard(active, "release device", async () =>
       this.opts.devices.setPhase(record.deviceId, "online"),
     );
