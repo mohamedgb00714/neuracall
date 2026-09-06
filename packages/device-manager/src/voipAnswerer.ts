@@ -24,6 +24,18 @@
  *  - An unmatched locale fails loudly with the labels it did see. A silent
  *    no-op is the bug this file exists to fix, so "found nothing, did nothing,
  *    reported success" must be unreachable.
+ *
+ * uiautomator can be blind to the ringing overlay: when the call screen is NOT
+ * the focused window (live-proven on the realme RMX3624 running French
+ * WhatsApp Business), the dump returns the other focused app and there is no
+ * accept control in it. An optional OCR fallback covers exactly that case.
+ * When a poll attempt finds no button, the current screen is capped to a fresh
+ * PNG and handed to the decoder's `detect`, whose bounding box comes from the
+ * same multi-language accept vocabulary. OCR is deliberately secondary: a
+ * flaky decode must never fail an answer the dump path could still win, so its
+ * errors surface through `onStep` and the poll carries on. The pid/detector
+ * that drove the ring detection stays the presence source of truth — OCR only
+ * provides a tap target, never a call-state oracle.
  */
 
 import type { CommandRunner } from "./adb.js";
@@ -270,6 +282,22 @@ export interface VoipAnswererOptions {
    * unanswered, with no error.
    */
   skipWake?: boolean;
+  /**
+   * Locate the accept control by OCR when the uiautomator dump cannot see it.
+   *
+   * A ringing overlay that is not the focused window is invisible to the dump
+   * (the dump is the other app), so polling the dump harder will not help. When
+   * set, every poll attempt that finds no node in the dump caps the current
+   * screen and asks `detect` for a tap target instead. Errors on this path are
+   * surfaced through `onStep` and swallowed — a flaky OCR must never fail an
+   * answer the dump path could still win.
+   */
+  ocrFallback?: {
+    /** Cap the current screen to a fresh PNG. Called with the device endpoint. */
+    captureScreen: (endpoint: string) => Promise<Buffer>;
+    /** Find the accept control in that frame. Returns a tap-able node or null. */
+    detect: (png: Buffer) => Promise<UiNode | null>;
+  };
 }
 
 export interface VoipAnswerResult {
@@ -329,7 +357,7 @@ export class VoipAnswerer {
 
     const button = await this.waitForButton(endpoint);
     const at = nodeCentre(button);
-    const label = button.contentDesc || button.text || button.resourceId;
+    const label = button.contentDesc || button.text || button.resourceId || "(ocr)";
     this.opts.onStep?.(`answering "${label}" at ${at.x},${at.y}`);
     await this.runner.runForDevice(endpoint, ["shell", "input", "tap", String(at.x), String(at.y)]);
     return { channel, tappedAt: at, buttonLabel: label, ...(screen ? { screen } : {}) };
@@ -357,13 +385,44 @@ export class VoipAnswerer {
       // keep the last thing actually seen so the error stays informative.
       const labels = clickableLabels(dump);
       if (labels.length > 0) lastLabels = labels;
+
+      // The dump is blind to a ringing overlay that is not the focused window;
+      // ask the OCR decoder for a tap target instead. Errors are surfaced and
+      // swallowed — a flaky OCR must not fail an answer the dump path could
+      // still win on a later attempt.
+      const ocrNode = await this.tryOcrFallback(endpoint);
+      if (ocrNode) return ocrNode;
     }
 
+    const ocrNote = this.opts.ocrFallback
+      ? " OCR fallback was attempted but found no accept control."
+      : "";
     throw new Error(
       `No accept control appeared within ${timeout}ms. ` +
         `Buttons seen: ${lastLabels.slice(0, 12).join(", ") || "(none)"}. ` +
-        `The call may have stopped ringing, or this locale's label is not recognised.`,
+        `The call may have stopped ringing, or this locale's label is not recognised.` +
+        ocrNote,
     );
+  }
+
+  /**
+   * The OCR fallback lookup, or null when no fallback is configured.
+   *
+   * Errors are reported through `onStep` as `ocr: <message>` and turned into
+   * "nothing found" so the caller keeps polling: the dump path is the reliable
+   * route and must not be abandoned because a decode hiccupped.
+   */
+  private async tryOcrFallback(endpoint: string): Promise<UiNode | null> {
+    const ocr = this.opts.ocrFallback;
+    if (!ocr) return null;
+    try {
+      const png = await ocr.captureScreen(endpoint);
+      return await ocr.detect(png);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.opts.onStep?.(`ocr: ${message}`);
+      return null;
+    }
   }
 
   private async dumpUi(endpoint: string): Promise<string> {

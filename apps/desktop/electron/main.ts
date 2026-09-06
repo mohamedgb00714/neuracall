@@ -4,9 +4,17 @@ import { dirname, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { loadEnv, getConfig, logStartupBanner } from "@neuracall/config";
 import { detectRequiredTools } from "@neuracall/scrcpy-bridge";
+import { VoiceAgentAdminClient } from "@neuracall/aai-client";
 import type { CreateContactInput, CrmStore } from "@neuracall/crm";
 import { Runtime } from "./service/runtime.js";
-import { SettingsStore, buildAppConfig, probeSettings } from "./service/settings.js";
+import {
+  SettingsStore,
+  buildAppConfig,
+  parseSettingsPatch,
+  probeSettings,
+  type NeuraCallSettings,
+} from "./service/settings.js";
+import { storedAgentDefinition } from "./service/voipAgents.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -79,6 +87,11 @@ function requireRuntime(): Runtime {
 function requireSettings(): SettingsStore {
   if (!settings) throw new Error("Settings store not initialised.");
   return settings;
+}
+
+/** The AssemblyAI REST admin client, bound to the app's key and region. */
+function voipAgentsClient(current: NeuraCallSettings): VoiceAgentAdminClient {
+  return new VoiceAgentAdminClient(buildAppConfig(assemblyAiKey, current));
 }
 
 /**
@@ -174,6 +187,9 @@ function registerIpc() {
   // ---- call control
   ipcMain.handle("call:dial", (_e, { deviceId, number }) =>
     attempt(() => requireRuntime().dial(deviceId, number)),
+  );
+  ipcMain.handle("call:dialWhatsApp", (_e, { deviceId, number, cc }) =>
+    attempt(() => requireRuntime().dialWhatsApp(deviceId, number, cc)),
   );
   ipcMain.handle("call:openDialer", (_e, { deviceId, number }) =>
     attempt(() => requireRuntime().openDialer(deviceId, number)),
@@ -306,6 +322,62 @@ function registerIpc() {
       runtime?.config ?? buildAppConfig(assemblyAiKey, store.current),
       store.current,
     );
+  });
+
+  // ---- per-device voice agents (create/update/delete stored agents)
+  // The stored agent is created/updated on the AssemblyAI REST API first, then
+  // its uuid is persisted in settings so the device carries it on every call.
+  ipcMain.handle("voip-agents:save", async (_e, { serial, config }) => {
+    try {
+      const store = requireSettings();
+      if (typeof serial !== "string" || serial.trim() === "") {
+        throw new Error("voip-agents:save needs a non-empty device serial.");
+      }
+      const validated = parseSettingsPatch({
+        voipAgents: { [serial]: config },
+      }).voipAgents?.[serial];
+      if (!validated) {
+        throw new Error("Invalid device agent configuration.");
+      }
+      const admin = voipAgentsClient(store.current);
+      const definition = storedAgentDefinition(validated, serial);
+      let agentId: string;
+      if (validated.agentId !== "") {
+        await admin.updateAgent(validated.agentId, definition);
+        agentId = validated.agentId;
+      } else {
+        agentId = (await admin.createAgent(definition)).id;
+      }
+      const saved = store.save({ voipAgents: { [serial]: { ...validated, agentId } } });
+      await runtime?.reloadSettings(saved);
+      send("settings:changed", store.redacted());
+      return { ok: true, agentId };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle("voip-agents:delete", async (_e, { serial }) => {
+    try {
+      const store = requireSettings();
+      if (typeof serial !== "string" || serial.trim() === "") {
+        throw new Error("voip-agents:delete needs a non-empty device serial.");
+      }
+      const existing = store.current.voipAgents[serial];
+      if (!existing) return { ok: true };
+      // A stored agent is deleted remotely too, so it stops existing anywhere —
+      // an orphaned agent would keep billing/matching long after the device it
+      // served has moved on.
+      if (existing.agentId !== "") {
+        await voipAgentsClient(store.current).deleteAgent(existing.agentId);
+      }
+      const saved = store.save({ voipAgents: { [serial]: null } });
+      await runtime?.reloadSettings(saved);
+      send("settings:changed", store.redacted());
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   ipcMain.handle("system:shutdown", async () => {

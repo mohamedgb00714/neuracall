@@ -9,6 +9,7 @@ import {
   parseForegroundPackage,
   parseAudioMode,
   parseAudioModeOwner,
+  parseAudioModeState,
   isVoipCallActive,
 } from "../src/whatsAppDetector.js";
 import { callChannelForOwner, channelForPackage } from "../src/callingApps.js";
@@ -288,6 +289,25 @@ test("a VoIP call owned by another app is reported on that app's channel, not Wh
   assert.equal(det.ownerPackage, "org.telegram.messenger");
 });
 
+test("a VoIP call with no mode owner is still a call, reported as generic voip", async () => {
+  // Regression: Realme RMX3624 sells MODE_IN_COMMUNICATION with a blank Mode
+  // owner (pid=0 uid=0). Before 80dbb3c the empty owner made audioCall false,
+  // so every real inbound VoIP call on OEM builds was silently dropped.
+  const runner = stubRunner([
+    TEL_IDLE,
+    ["Mode dump:", "- Current mode = MODE_IN_COMMUNICATION", "- Mode owner: pid=0 uid=0"],
+    ["(no mResumedActivity on this OEM)"], // dumpsys activity activities
+    ["(no window focus)"], // dumpsys window
+  ]);
+  const det = await new AdbCallChannelDetector(runner).detect("SERIAL");
+  assert.deepEqual(det, {
+    present: true,
+    channel: "voip",
+    stage: "in-progress",
+    ownerPackage: "voip",
+  });
+});
+
 test("a WhatsApp Business call already in progress is detected without call UI", async () => {
   const runner = stubRunner([
     TEL_IDLE, // WhatsApp VoIP never reaches the telephony registry
@@ -430,6 +450,68 @@ const RMX3624_AUDIO_DURING_CALL = [
   "Audio mode events:",
   "08-31 20:55:48:086 setMode(MODE_IN_COMMUNICATION) from package=com.whatsapp.w4b pid=26351",
 ].join("\n");
+
+/**
+ * Live-verified shape from the same handset ONE week later (Sep 5): the mode
+ * stays NORMAL for the whole WhatsApp Business call — only `mModeOwnerPid`
+ * moved (0 -> <whatsapp pid> -> 0). This is the fixed-by-this-change case:
+ * audio.mode never reaches in_communication, so presence has to come from the
+ * mode-owner pid.
+ */
+const RMX3624_AUDIO_PID_ONLY = [
+  "Audio Mode dump:",
+  "- mode (internal) = NORMAL",
+  "- mode (external) = NORMAL",
+  "- Mode owner: ",
+  "- Mode owner stack: ",
+  "  mModeOwnerPid: 31252",
+  "Audio mode events:",
+  "08-31 14:40:01:496 setMode(MODE_IN_COMMUNICATION) from package=com.whatsapp.w4b pid=21819",
+].join("\n");
+
+test("the mode-owner pid is read even when the audio mode stays NORMAL (live Realme behavior)", () => {
+  assert.equal(parseAudioMode(RMX3624_AUDIO_PID_ONLY), "normal");
+  assert.equal(parseAudioModeState(RMX3624_AUDIO_PID_ONLY).ownerPid, "31252");
+  assert.equal(isVoipCallActive(RMX3624_AUDIO_PID_ONLY), true);
+});
+
+test("mModeOwnerPid 0 means no owner, never a call", () => {
+  const idle = RMX3624_AUDIO_PID_ONLY.replace("31252", "0");
+  assert.equal(parseAudioModeState(idle).ownerPid, "0");
+  assert.equal(isVoipCallActive(idle), false);
+});
+
+test("an in-progress WhatsApp call whose mode stays NORMAL is detected via the owner pid", async () => {
+  const runner = stubRunner([
+    TEL_IDLE, // WhatsApp VoIP never reaches the telephony registry
+    RMX3624_AUDIO_PID_ONLY.split("\n"), // mode NORMAL, mModeOwnerPid 31252
+    ["PID NAME", "21819 com.android.systemui", "31252 com.whatsapp.w4b"], // ps
+    ["(no mResumedActivity on this OEM)"],
+    ["  mFocusedApp=ActivityRecord{1 u0 com.android.launcher/.Launcher} t9 d0}"],
+  ]);
+  const det = await new AdbCallChannelDetector(runner).detect("2B26295410JA0CN2");
+  assert.deepEqual(det, {
+    present: true,
+    channel: "whatsapp",
+    stage: "in-progress",
+    ownerPackage: "com.whatsapp.w4b",
+  });
+});
+
+test("an owner pid that maps to an unknown package is still a call, as generic voip", async () => {
+  const runner = stubRunner([
+    TEL_IDLE,
+    RMX3624_AUDIO_PID_ONLY.split("\n"),
+    ["PID NAME", "31252 com.brand.new.dialer"], // ps
+    ["(no mResumedActivity on this OEM)"],
+    ["  mFocusedApp=ActivityRecord{1 u0 com.android.launcher/.Launcher} t9 d0}"],
+  ]);
+  const det = await new AdbCallChannelDetector(runner).detect("2B26295410JA0CN2");
+  assert.deepEqual(
+    { present: det.present, channel: det.channel, stage: det.stage, ownerPackage: det.ownerPackage },
+    { present: true, channel: "voip", stage: "in-progress", ownerPackage: "com.brand.new.dialer" },
+  );
+});
 
 test("a call that has ended is not reported as ongoing from the setMode log", () => {
   // Observed live: `- mode (internal) = NORMAL` matched none of the mode

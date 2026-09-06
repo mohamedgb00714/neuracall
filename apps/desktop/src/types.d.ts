@@ -148,6 +148,34 @@ export type AssemblyAIRegion = "us" | "eu" | "edge";
 export type TranscriptionMode = "min_latency" | "balanced" | "max_accuracy";
 export type TtsProvider = "auto" | "openai" | "elevenlabs" | "command" | "silent";
 
+export type VoiceAgentFocus = "near-field" | "far-field";
+
+/**
+ * A per-phone voice agent, as edited from the Settings page. Mirrors
+ * `DeviceAgentConfig` in electron/service/settings.ts, which is where the
+ * shape is defined; `null` fields mean "leave the service default".
+ */
+export interface DeviceAgentDraft {
+  /** Uuid of a stored agent, or "" to configure it inline. */
+  agentId: string;
+  name: string;
+  voice: string;
+  greeting: string;
+  systemPrompt: string;
+  keyterms: string[];
+  transcriptionMode: TranscriptionMode | null;
+  voiceFocus: VoiceAgentFocus | null;
+  voiceFocusThreshold: number | null;
+  turnDetection: {
+    vadThreshold: number | null;
+    minSilenceMs: number | null;
+    maxSilenceMs: number | null;
+    interruptResponse: boolean;
+    interruptionDelayMs: number | null;
+  };
+  volume: number | null;
+}
+
 /** The persisted settings document (owned by electron/service/settings.ts). */
 export interface NeuraCallSettings {
   assemblyai: {
@@ -156,6 +184,16 @@ export interface NeuraCallSettings {
     mode: TranscriptionMode;
     /** Bias terms sent with the stream, max 100. */
     keyterms: string[];
+    /** Steer transcription toward these languages (U3.5 Pro only). */
+    languageCodes: string[];
+    /** VAD confidence threshold 0-1; null = the service default. */
+    vadThreshold: number | null;
+    /** Silence (ms) before a speculative end-of-turn check; null = the service default. */
+    minTurnSilence: number | null;
+    /** Max silence (ms) before a turn is forced to end; null = the service default. */
+    maxTurnSilence: number | null;
+    /** Emit Heartbeat every 5 s. */
+    sessionHeartbeat: boolean;
   };
   llm: {
     apiKey: string;
@@ -188,6 +226,11 @@ export interface NeuraCallSettings {
     greeting: string;
     systemPrompt: string;
   };
+  /**
+   * One voice agent per attached phone, keyed by device serial. An entry here
+   * wins over the global `voiceAgent` section on that device's calls.
+   */
+  voipAgents: Record<string, DeviceAgentDraft>;
   audio: {
     /** scrcpy --audio-source. */
     captureSource: string;
@@ -267,6 +310,7 @@ export interface NeuraCallBridge {
   checkScrcpy(): Promise<ToolStatus>;
   checkAdb(): Promise<ToolStatus>;
   dialNumber(deviceId: string, number: string): Promise<OkResult>;
+  dialWhatsApp(deviceId: string, number: string, cc?: string): Promise<OkResult>;
   openDialer(deviceId: string, number?: string): Promise<OkResult>;
   answerCall(deviceId: string): Promise<OkResult>;
   hangUpCall(deviceId: string): Promise<OkResult>;
@@ -303,6 +347,11 @@ export interface NeuraCallBridge {
   saveSettings(patch: SettingsPatch): Promise<SettingsSaveResult>;
   resetSettings(): Promise<RedactedSettings>;
   probeSettings(): Promise<SettingsProbe>;
+  saveVoipAgent(
+    serial: string,
+    config: DeviceAgentDraft,
+  ): Promise<{ ok: boolean; agentId?: string; error?: string }>;
+  deleteVoipAgent(serial: string): Promise<{ ok: boolean; error?: string }>;
   onSettingsChanged(cb: (settings: RedactedSettings) => void): () => void;
 }
 

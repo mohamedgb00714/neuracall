@@ -23,7 +23,7 @@ Be straight about this before you plan anything around it.
 | Live transcript, per phone and per channel                                       | **Works** (desktop app)                                                                                                                                                                                 |
 | Record the call to a WAV + JSON sidecar as it happens                            | **Works.** Autopilot records every call it answers into the app's data directory                                                                                                                        |
 | Think: LLM reply per finished caller turn, with barge-in cancellation            | **Works** (library; OpenAI-compatible / OpenRouter by default)                                                                                                                                          |
-| Speak: turn that reply into audio                                                | **Works** via the AssemblyAI Voice Agent — transcription, reply and voice over one socket on the key you already have. On the composed path, `TtsClient` still needs a provider or it stays `SilentTts` |
+| Speak: turn that reply into audio                                                | **Works** via the AssemblyAI Voice Agent — one socket on the key you already have. On the composed path the default speaks the OpenAI-compatible `/audio/speech` endpoint on the LLM's own key/model, so nothing TTS-specific has to be set; only a host with no LLM and no TTS config falls back to `SilentTts` |
 | **Make the caller hear it**                                                      | **Needs a transport you set up yourself** — see below                                                                                                                                                   |
 | Desktop app running the full answer→reply loop                                   | **Works**, opt-in. Autopilot is off until an operator turns it on, and answers inbound calls only                                                                                                       |
 | CRM / contacts / SQLite history                                                  | **Works.** Electron 37 bundles Node 22, so `node:sqlite` is there; the append-only JSONL store remains the fallback for any runtime without it                                                          |
@@ -39,7 +39,12 @@ The distinction matters because the two halves fail identically from the
 outside. Generating speech is solved: turn on the Voice Agent
 ([docs/VOICE-AGENT.md](docs/VOICE-AGENT.md)) and `node scripts/live-voice-agent.mjs`
 will hold a full conversation against the real service, with no extra
-credentials. Getting that audio into a live call is the part below.
+credentials. On the composed path the same is true of your LLM config —
+`LLM_API_KEY` / `LLM_MODEL` (and `LLM_BASE_URL` if you set one) back an
+OpenAI-compatible `/audio/speech` TTS by default, so a reply is spoken with
+nothing TTS-specific to configure; `SilentTts` is the last resort when there
+is no LLM, no `TTS_*` config and no local engine. Getting that audio into a
+live call is the part below.
 
 `scrcpy` is a capture and control tool. No `--audio-source` value plays audio
 _into_ a call, and there is no supported way for an adb-shell process to write
@@ -56,11 +61,11 @@ out-of-band transport:
 
 The code side is ready for all three and the app side is wired: point the
 **Inject sink** setting at a host audio sink and `CommandAudioInjector` plays
-the agent's PCM into it through `pw-play` / `paplay` / `aplay` — which is
-exactly what a Bluetooth HFP sink or a speaker looks like. What is missing is
-only the operator-side setup: pairing a phone over HFP takes a confirmation tap
-on the handset and cannot be scripted. [docs/RUNBOOK.md](docs/RUNBOOK.md) §3a
-has the procedure, including the check that the adapter advertises the Handsfree
+the agent's PCM into it through `aplay` / `ffplay` (streaming raw PCM on stdin) —
+which is exactly what a Bluetooth HFP sink or a speaker looks like. What is
+missing is only the operator-side setup: pairing a phone over HFP takes a
+confirmation tap on the handset and cannot be scripted. [docs/RUNBOOK.md](docs/RUNBOOK.md)
+§3a has the procedure, including the check that the adapter advertises the Handsfree
 profile rather than only A2DP — a sink that carries music has no microphone path
 and so cannot carry a call.
 

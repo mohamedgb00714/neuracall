@@ -5,8 +5,17 @@
  * documented route — an `ActivityRecord` on the contact's
  * `vnd.android.cursor.item/vnd.com.whatsapp.voip.call` data row — only exists
  * once the app has been granted contacts access *and* has run a sync, which is
- * not true on a freshly permitted install. So the reliable path is the one a
- * person uses: open the conversation by deep link, then press the call button.
+ * not true on the development handset (no such data rows exist there — checked
+ * on device). So the reliable path is the one a person uses: open the
+ * conversation by deep link, then press the call button.
+ *
+ * The deep link matters more than it looks. `https://wa.me/<number>` is the
+ * obvious choice but resolves to the system `ResolverActivity` on the realme
+ * (Chrome is installed and shares the handler), so `am start` pops an "Open
+ * with" chooser instead of the chat and the call-button poll times out.
+ * `whatsapp://send?phone=<number>` is scheme-only WhatsApp, and
+ * `pm resolve-activity` on the live device resolves it straight to
+ * `com.whatsapp.w4b/com.whatsapp.TextAndDirectChatDeepLink` — no chooser, ever.
  *
  * That means UI automation, with the fragility that implies. Two things keep it
  * honest:
@@ -136,10 +145,13 @@ export function clickableLabels(dump: string): string[] {
 /**
  * Deep links that open a conversation with a number, per channel. The number
  * is digits-only in international form (no "+"), which is what all of these
- * expect.
+ * expect. WhatsApp uses the `whatsapp://send` scheme rather than the
+ * `https://wa.me` page: the former resolves to WhatsApp alone (verified via
+ * `pm resolve-activity` on the realme RMX3624), while the latter also matches
+ * Chrome and hands the dial to the system resolver chooser.
  */
 const CHAT_DEEP_LINKS: Partial<Record<ChannelKind, (digits: string) => string>> = {
-  whatsapp: (d) => `https://wa.me/${d}`,
+  whatsapp: (d) => `whatsapp://send?phone=${d}`,
   telegram: (d) => `tg://resolve?phone=${d}`,
   signal: (d) => `https://signal.me/#p/+${d}`,
 };
@@ -168,6 +180,52 @@ export function deepLinkDigits(number: string, defaultCountryCode?: string): str
   // the international number.
   const national = digits.length > 1 && digits.startsWith("0") ? digits.slice(1) : digits;
   return national.startsWith(cc) ? national : cc + national;
+}
+
+/**
+ * The exact `am start` command that opens a conversation for a dial.
+ *
+ * Pure — built and asserted in unit tests without a phone — so the scripted
+ * steps the class runs around it (wake, wait, tap) are the only untested part
+ * to change when WhatsApp moves its button.
+ */
+export interface DialCommand {
+  channel: ChannelKind;
+  /** The URI the intent opens: `whatsapp://send?phone=<digits>` for WhatsApp. */
+  link: string;
+  /**
+   * argv to pass through `CommandRunner.runForDevice(endpoint, args)` — the
+   * `am start` for the `-a android.intent.action.VIEW` on that link.
+   */
+  args: string[];
+}
+
+/** Build the exact intent argv that opens the conversation with `number`. */
+export function buildDialCommand(
+  channel: ChannelKind,
+  number: string,
+  defaultCountryCode?: string,
+): DialCommand {
+  const build = CHAT_DEEP_LINKS[channel];
+  if (!build) {
+    throw new Error(
+      `Outbound calling is not implemented for "${channel}". Supported: ${Object.keys(CHAT_DEEP_LINKS).join(", ")}.`,
+    );
+  }
+  const link = build(deepLinkDigits(number, defaultCountryCode));
+  return {
+    channel,
+    link,
+    args: [
+      "shell",
+      "am",
+      "start",
+      "-a",
+      "android.intent.action.VIEW",
+      "-d",
+      link,
+    ],
+  };
 }
 
 export interface VoipDialerOptions {
@@ -224,13 +282,7 @@ export class VoipDialer {
 
   /** Build the deep link that opens a conversation. */
   chatLink(channel: ChannelKind, number: string): string {
-    const build = CHAT_DEEP_LINKS[channel];
-    if (!build) {
-      throw new Error(
-        `Outbound calling is not implemented for "${channel}". Supported: ${Object.keys(CHAT_DEEP_LINKS).join(", ")}.`,
-      );
-    }
-    return build(deepLinkDigits(number, this.opts.defaultCountryCode));
+    return buildDialCommand(channel, number, this.opts.defaultCountryCode).link;
   }
 
   /**
@@ -256,15 +308,10 @@ export class VoipDialer {
       }
     }
     this.opts.onStep?.(`opening ${link}`);
-    await this.runner.runForDevice(endpoint, [
-      "shell",
-      "am",
-      "start",
-      "-a",
-      "android.intent.action.VIEW",
-      "-d",
-      link,
-    ]);
+    await this.runner.runForDevice(
+      endpoint,
+      buildDialCommand(channel, number, this.opts.defaultCountryCode).args,
+    );
 
     const button = await this.waitForButton(endpoint);
     const at = nodeCentre(button);

@@ -10,6 +10,7 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { AudioInjector } from "@neuracall/audio-pipeline";
+import type { VoiceAgentOptions } from "@neuracall/aai-client";
 import { VoiceAgentBridge } from "../src/voiceAgentBridge.js";
 
 /** Stands in for a VoiceAgentSession: same events, no socket. */
@@ -368,4 +369,94 @@ test("an inline agent with no greeting does not delay call setup", async () => {
 
   assert.equal(greeting, null);
   assert.ok(Date.now() - started < 100, "it must not wait out the greeting timeout");
+});
+
+test("realtime tuning reaches the Voice Agent where it has a slot", async () => {
+  // The operator's vad_threshold / turn-silence knobs have a genuine
+  // equivalent in the Voice Agent config (turn_detection); language_codes and
+  // session_heartbeat do not, and must be left alone rather than fake-mapped —
+  // the mergeSttParams contract.
+  let received!: VoiceAgentOptions;
+  const bridge = new VoiceAgentBridge({
+    apiKey: "k",
+    session: { system_prompt: "Be brief." },
+    createSession: (options: VoiceAgentOptions) => {
+      received = options;
+      return new FakeSession() as never;
+    },
+  });
+
+  await bridge.open(KEY, {
+    params: {
+      sampleRate: 16000,
+      speechModel: "universal-3-5-pro",
+      vad_threshold: 0.6,
+      min_turn_silence: 2000,
+      max_turn_silence: 6000,
+      language_codes: ["ar"],
+      session_heartbeat: true,
+    },
+  } as never);
+
+  const input = received.session?.input as Record<string, unknown>;
+  assert.deepEqual(input["turn_detection"], {
+    vad_threshold: 0.6,
+    min_silence: 2000,
+    max_silence: 6000,
+  });
+  assert.equal(input["language_codes"], undefined, "no language_codes slot on the Voice Agent");
+  assert.equal(
+    input["session_heartbeat"],
+    undefined,
+    "no session_heartbeat slot on the Voice Agent",
+  );
+  assert.equal(
+    received.session?.input?.keyterms ?? input["prompt"],
+    undefined,
+    "nothing else is invented for fields without a counterpart",
+  );
+});
+
+test("sessionFor picks a stored agent per device, falling back to the static one", async () => {
+  const seen: VoiceAgentOptions[] = [];
+  const bridge = new VoiceAgentBridge({
+    apiKey: "k",
+    agentId: "global-agent",
+    sessionFor: (key) =>
+      key.deviceId === "DEV1" ? { agentId: "device1-agent" } : undefined,
+    createSession: (opts) => {
+      seen.push(opts);
+      return new FakeSession() as never;
+    },
+  });
+  await bridge.open({ deviceId: "DEV1", channelId: "whatsapp" }, PARAMS);
+  await bridge.open({ deviceId: "DEV2", channelId: "whatsapp" }, PARAMS);
+  await bridge.open({ deviceId: "DEV3", channelId: "whatsapp" }, PARAMS);
+
+  assert.equal(seen[0]?.agentId, "device1-agent", "DEV1 gets its own stored agent");
+  assert.equal(seen[1]?.agentId, "global-agent", "DEV2 falls back to the static agent");
+  assert.equal(seen[2]?.agentId, "global-agent", "DEV3 falls back to the static agent");
+  assert.equal(seen[0]?.session, undefined, "agent_id and inline config never mix");
+});
+
+test("sessionFor can hand a device an inline persona instead of a stored agent", async () => {
+  const seen: VoiceAgentOptions[] = [];
+  const bridge = new VoiceAgentBridge({
+    apiKey: "k",
+    session: { voice: "alba" },
+    sessionFor: (key) =>
+      key.deviceId === "DEV1"
+        ? { session: { voice: "estelle", greeting: "Bonjour" } }
+        : undefined,
+    createSession: (opts) => {
+      seen.push(opts);
+      return new FakeSession() as never;
+    },
+  });
+  await bridge.open({ deviceId: "DEV1", channelId: "whatsapp" }, PARAMS);
+  await bridge.open({ deviceId: "DEV9", channelId: "whatsapp" }, PARAMS);
+
+  assert.equal(seen[0]?.session?.voice, "estelle");
+  assert.equal(seen[0]?.session?.greeting, "Bonjour");
+  assert.equal(seen[1]?.session?.voice, "alba", "DEV9 keeps the static inline persona");
 });

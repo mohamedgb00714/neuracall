@@ -6,6 +6,7 @@
  */
 
 import type { ChannelKind } from "@neuracall/device-manager";
+import type { UpdateConfigurationFields } from "@neuracall/aai-client";
 import type { CallState } from "./stateMachine.js";
 
 /** Who started the call. */
@@ -168,14 +169,16 @@ export interface AgentReply {
   channels?: 1 | 2;
   /** Terms to bias the next turn toward (names, SKUs, account numbers). */
   keyterms?: string[];
+  /** Extra realtime STT tuning to push mid-session (VAD threshold, turn-silence bounds, …). */
+  updateConfiguration?: Partial<UpdateConfigurationFields>;
   /** End the call after this reply has played. */
   hangUp?: boolean;
 }
 
 /**
- * The conversational brain. Phase 5's agent task supplies the real one (LLM +
- * TTS); the orchestrator only needs "a finalized caller turn goes in, an
- * optional reply comes out".
+ * The conversational brain. @neuracall/agent (composed LLM + TTS providers)
+ * implements it; the orchestrator only needs "a finalized caller turn goes in,
+ * an optional reply comes out".
  *
  * Returning null means "say nothing" — the caller is still talking, or the
  * turn was noise.

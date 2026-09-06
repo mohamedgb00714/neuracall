@@ -247,17 +247,81 @@ test("an abort during the 429 backoff is not retried away", async () => {
   assert.equal(calls.length, 1, "no second attempt after the abort");
 });
 
-test("the signal is forwarded to fetch so an in-flight call can be cancelled", async () => {
+test("the caller's signal is composed into the fetch signal, so an in-flight call can still be cancelled", async () => {
   const controller = new AbortController();
   let seen: AbortSignal | null | undefined;
   const c = new LlmGatewayClient(testConfig(), {
-    fetchFn: async (_url, init) => {
-      seen = init?.signal;
-      return new Response(JSON.stringify(completion("ok")), { status: 200 });
+    fetchFn: (_url, init) =>
+      // Never resolves; the only way out is the composed signal aborting.
+      new Promise<Response>((_resolve, reject) => {
+        seen = init?.signal;
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")),
+        );
+      }),
+  });
+
+  const pending = c.chat({ model: MODEL, messages: [], signal: controller.signal });
+  await new Promise((r) => setImmediate(r));
+  assert.ok(seen instanceof AbortSignal, "fetch receives a real signal");
+  // Since committing to AbortSignal.any the signal is composite, not the
+  // caller's own instance — the caller's abort must still abort it.
+  assert.notEqual(seen, controller.signal);
+
+  controller.abort();
+  await assert.rejects(pending, (err: unknown) => {
+    assert.equal((err as Error).name, "AbortError");
+    return true;
+  });
+});
+
+test("a caller abort wins over a fetch that never settles", async () => {
+  const controller = new AbortController();
+  const c = new LlmGatewayClient(testConfig(), {
+    fetchFn: (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("Aborted", "AbortError")),
+        );
+      }),
+  });
+
+  const pending = c.chat({ model: MODEL, messages: [], signal: controller.signal });
+  setTimeout(() => controller.abort(), 0);
+  await assert.rejects(pending, (err: unknown) => {
+    assert.equal((err as Error).name, "AbortError");
+    return true;
+  });
+});
+
+test("chat() composes AbortSignal.timeout(30s) into the fetch signal, with or without a caller signal", async () => {
+  const original = globalThis.AbortSignal.timeout;
+  const calls: Array<[number, ...unknown[]]> = [];
+  const signature = original.bind(AbortSignal);
+  globalThis.AbortSignal.timeout = (...args: Parameters<typeof original>) => {
+    calls.push(args);
+    return signature(...args);
+  };
+  const signals: Array<AbortSignal | null | undefined> = [];
+  const c = new LlmGatewayClient(testConfig(), {
+    fetchFn: (_url, init) => {
+      signals.push(init?.signal);
+      return Promise.resolve(new Response(JSON.stringify(completion("ok")), { status: 200 }));
     },
   });
-  await c.chat({ model: MODEL, messages: [], signal: controller.signal });
-  assert.equal(seen, controller.signal);
+
+  try {
+    await c.chat({ model: MODEL, messages: [] });
+    await c.chat({ model: MODEL, messages: [], signal: new AbortController().signal });
+  } finally {
+    globalThis.AbortSignal.timeout = original;
+  }
+
+  // The 30s bound is always part of the composite (or the whole signal for a
+  // bare call), so an uncredited reply cannot hold the process open forever.
+  assert.equal(calls.length, 2, "a deadline is composed per attempt");
+  assert.deepEqual(calls.map(([ms]) => ms), [30_000, 30_000]);
+  assert.ok(signals.every((s) => s instanceof AbortSignal));
 });
 
 test("a completion with no choices yields an empty string, not a crash", () => {

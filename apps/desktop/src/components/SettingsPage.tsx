@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type {
   AssemblyAIRegion,
+  DeviceAgentDraft,
+  NeuraCallDevice,
   ProbeResult,
   RedactedSettings,
   SettingsProbe,
@@ -381,6 +383,11 @@ export function SettingsPage() {
         </Field>
       </section>
 
+      <section className="settings-group">
+        <h2>Per-phone voice agents</h2>
+        <DeviceAgentsCard settings={settings} reload={reload} />
+      </section>
+
       <section className={`settings-group${voiceAgentOn ? " settings-group-unused" : ""}`}>
         <h2>
           AI agent (LLM)
@@ -715,5 +722,319 @@ function ProbeRow({ label, result }: { label: string; result: ProbeResult }) {
       <span className="probe-mark">{result.ok ? "✓" : "✕"}</span>
       <span className="probe-detail">{result.detail}</span>
     </li>
+  );
+}
+
+// ------------------------------------------------------------------ per-device agents
+// One AssemblyAI stored agent per attached phone. Saves go over their own IPC
+// channels (voip-agents:save/delete) and set settings in the main process, so
+// this card never touches the main form's `dirtyRef` — editing it must not mark
+// the whole settings page as having unsaved changes.
+
+type AgentForm = {
+  name: string;
+  voice: string;
+  greeting: string;
+  systemPrompt: string;
+  keyterms: string;
+  transcriptionMode: "" | TranscriptionMode;
+  voiceFocus: "" | "near-field" | "far-field";
+};
+
+const EMPTY_AGENT_FORM: AgentForm = {
+  name: "",
+  voice: "",
+  greeting: "",
+  systemPrompt: "",
+  keyterms: "",
+  transcriptionMode: "",
+  voiceFocus: "",
+};
+
+function deviceAgentForm(existing: DeviceAgentDraft): AgentForm {
+  return {
+    name: existing.name,
+    voice: existing.voice,
+    greeting: existing.greeting,
+    systemPrompt: existing.systemPrompt,
+    keyterms: existing.keyterms.join("\n"),
+    transcriptionMode: existing.transcriptionMode ?? "",
+    voiceFocus: existing.voiceFocus ?? "",
+  };
+}
+
+type AgentSaveState =
+  | { kind: "idle" }
+  | { kind: "pending" }
+  | { kind: "saved"; agentId: string }
+  | { kind: "error"; message: string };
+
+function DeviceAgentsCard({
+  settings,
+  reload,
+}: {
+  settings: RedactedSettings;
+  reload: (next: RedactedSettings) => void;
+}) {
+  const [devices, setDevices] = useState<NeuraCallDevice[]>([]);
+  const [selected, setSelected] = useState("");
+  const [form, setForm] = useState<AgentForm>(EMPTY_AGENT_FORM);
+  const [saveState, setSaveState] = useState<AgentSaveState>({ kind: "idle" });
+
+  useEffect(() => {
+    const bridge = window.neuracall;
+    if (!bridge) return;
+    let cancelled = false;
+
+    bridge
+      .listDevices()
+      .then((list) => {
+        if (!cancelled) setDevices(list);
+      })
+      .catch(() => {});
+
+    const off = bridge.onDevicesChange((updated) => {
+      setDevices((prev) =>
+        [...prev.filter((d) => d.id !== updated.id), updated].sort((a, b) =>
+          a.id.localeCompare(b.id),
+        ),
+      );
+    });
+
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, []);
+
+  // Keep the selection on a real device: the first attached one by default,
+  // and a new first-attached one when the current one goes away.
+  useEffect(() => {
+    if (devices.length === 0) {
+      setSelected("");
+      return;
+    }
+    if (devices.some((d) => d.id === selected)) return;
+    const fallback = devices.find((d) => d.adbState === "device") ?? devices[0];
+    setSelected(fallback?.id ?? "");
+  }, [devices, selected]);
+
+  // The stored entry is the form's source of truth whenever it changes, so a
+  // save or a delete made elsewhere shows up without a reload button.
+  useEffect(() => {
+    const existing = selected === "" ? undefined : settings.voipAgents[selected];
+    setForm(existing ? deviceAgentForm(existing) : EMPTY_AGENT_FORM);
+  }, [selected, settings]);
+
+  if (devices.length === 0) {
+    return (
+      <p className="empty">
+        No phones detected. Connect a phone via ADB (USB or Wi-Fi) and it will appear here.
+      </p>
+    );
+  }
+
+  const patchForm = (changes: Partial<AgentForm>) => {
+    setSaveState({ kind: "idle" });
+    setForm((prev) => ({ ...prev, ...changes }));
+  };
+
+  const save = async () => {
+    if (selected === "") return;
+    const existing = settings.voipAgents[selected];
+    const draft: DeviceAgentDraft = {
+      agentId: existing?.agentId ?? "",
+      name: form.name,
+      voice: form.voice,
+      greeting: form.greeting,
+      systemPrompt: form.systemPrompt,
+      keyterms: parseKeyterms(form.keyterms),
+      transcriptionMode: form.transcriptionMode === "" ? null : form.transcriptionMode,
+      voiceFocus: form.voiceFocus === "" ? null : form.voiceFocus,
+      // Keep the knobs this card does not expose at the service defaults.
+      voiceFocusThreshold: null,
+      turnDetection: {
+        vadThreshold: null,
+        minSilenceMs: null,
+        maxSilenceMs: null,
+        interruptResponse: true,
+        interruptionDelayMs: null,
+      },
+      volume: null,
+    };
+
+    setSaveState({ kind: "pending" });
+    try {
+      const result = await window.neuracall.saveVoipAgent(selected, draft);
+      if (result.ok) {
+        setSaveState({ kind: "saved", agentId: result.agentId ?? "" });
+        reload(await window.neuracall.getSettings());
+      } else {
+        setSaveState({ kind: "error", message: result.error ?? "Save failed." });
+      }
+    } catch (err) {
+      setSaveState({ kind: "error", message: String(err) });
+    }
+  };
+
+  const remove = async () => {
+    if (selected === "") return;
+    setSaveState({ kind: "pending" });
+    try {
+      const result = await window.neuracall.deleteVoipAgent(selected);
+      if (result.ok) {
+        setSaveState({ kind: "idle" });
+        reload(await window.neuracall.getSettings());
+      } else {
+        setSaveState({ kind: "error", message: result.error ?? "Delete failed." });
+      }
+    } catch (err) {
+      setSaveState({ kind: "error", message: String(err) });
+    }
+  };
+
+  const hasStored = selected !== "" && settings.voipAgents[selected] !== undefined;
+
+  return (
+    <div>
+      <Field label="Device" hint="Which attached phone this agent answers for.">
+        <select
+          value={selected}
+          onChange={(e) => {
+            setSelected(e.target.value);
+            setSaveState({ kind: "idle" });
+          }}
+        >
+          {devices.map((device) => (
+            <option key={device.id} value={device.id}>
+              {device.label ?? device.id}
+              {device.adbState !== "device" ? ` — ${device.adbState}` : ""}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label="Agent name" hint="The stored agent's name; what CRM and logs show.">
+        <input
+          type="text"
+          value={form.name}
+          placeholder="Front desk EN"
+          onChange={(e) => patchForm({ name: e.target.value })}
+        />
+      </Field>
+
+      <Field label="Voice" hint="Picks both the voice and the language this phone's agent answers in.">
+        <select
+          value={form.voice}
+          onChange={(e) => patchForm({ voice: e.target.value })}
+        >
+          {/* A voice set from settings that this build does not know is still
+              shown, so opening the dropdown cannot silently rewrite it. */}
+          {!isKnownVoice(form.voice) && (
+            <option value={form.voice}>
+              {form.voice === ""
+                ? "— no voice set —"
+                : `${form.voice} — unknown voice`}
+            </option>
+          )}
+          {VOICES.map((voice) => (
+            <option key={voice.id} value={voice.id}>
+              {voiceLabel(voice)}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label="Greeting" hint="The first thing said after answering. Blank opens silently.">
+        <textarea
+          rows={2}
+          value={form.greeting}
+          placeholder="Hello, thanks for calling. How can I help?"
+          onChange={(e) => patchForm({ greeting: e.target.value })}
+        />
+      </Field>
+
+      <Field
+        label="System prompt"
+        hint="How this phone's agent behaves on every call. Blank uses the NeuraCall house prompt."
+      >
+        <textarea
+          rows={6}
+          value={form.systemPrompt}
+          onChange={(e) => patchForm({ systemPrompt: e.target.value })}
+        />
+      </Field>
+
+      <Field
+        label="Key terms"
+        hint="One per line or comma-separated. Names, products, anything the model keeps mishearing on this phone."
+      >
+        <textarea
+          rows={4}
+          value={form.keyterms}
+          placeholder={"NeuraCall\nwarranty"}
+          onChange={(e) => patchForm({ keyterms: e.target.value })}
+        />
+      </Field>
+
+      <Field label="Transcription mode" hint="Latency against accuracy for this phone's calls.">
+        <select
+          value={form.transcriptionMode}
+          onChange={(e) =>
+            patchForm({ transcriptionMode: e.target.value as "" | TranscriptionMode })
+          }
+        >
+          <option value="">— service default —</option>
+          {MODES.map((m) => (
+            <option key={m.value} value={m.value}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <Field
+        label="Voice focus"
+        hint="Picks the microphone field: near-field for the caller speaking close, far-field for the room."
+      >
+        <select
+          value={form.voiceFocus}
+          onChange={(e) =>
+            patchForm({ voiceFocus: e.target.value as "" | "near-field" | "far-field" })
+          }
+        >
+          <option value="">— service default —</option>
+          <option value="near-field">near-field</option>
+          <option value="far-field">far-field</option>
+        </select>
+      </Field>
+
+      <div className="device-agents-actions">
+        <button
+          type="button"
+          className="btn btn-start"
+          onClick={() => void save()}
+          disabled={saveState.kind === "pending"}
+        >
+          {saveState.kind === "pending" ? "Saving…" : "Save agent"}
+        </button>
+        {hasStored && (
+          <button
+            type="button"
+            className="btn btn-stop"
+            onClick={() => void remove()}
+            disabled={saveState.kind === "pending"}
+          >
+            Delete agent
+          </button>
+        )}
+      </div>
+
+      {!hasStored && <p className="muted">No agent saved for this phone yet — Save creates one.</p>}
+      {saveState.kind === "saved" && (
+        <p className="settings-ok">Saved — agent {saveState.agentId}</p>
+      )}
+      {saveState.kind === "error" && <p className="settings-error">{saveState.message}</p>}
+    </div>
   );
 }

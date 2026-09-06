@@ -51,6 +51,64 @@ test("DeviceManager flattens a USB device as offline when it disappears", async 
   assert.equal(dm.get("emulator-5554")?.adbState, "offline");
 });
 
+test("DeviceManager emits device/adb-state/phase events when a device vanishes", async () => {
+  // Regression: consumers (the orchestrator, the UI) learned a device dropped
+  // only by polling — the vanish loop and markAllOffline() used to update the
+  // device map silently, emitting no events. The fix emits on both paths.
+  const runner = stubRunner([
+    ["List of devices attached", "emulator-5554\tdevice", "192.168.0.10:5555\tdevice"],
+    ["List of devices attached", "emulator-5554\tdevice"],
+  ]);
+  const dm = new DeviceManager({ runner });
+  await dm.refresh();
+  assert.equal(dm.snapshot.length, 2);
+
+  const adbStates: Array<{ id: string; state: string }> = [];
+  const phases: Array<{ id: string; phase: string }> = [];
+  const devices: string[] = [];
+  dm.on("adb-state", (id: string, state: string) => adbStates.push({ id, state }));
+  dm.on("phase", (id: string, phase: string) => phases.push({ id, phase }));
+  dm.on("device", (device: { id: string }) => devices.push(device.id));
+
+  // Second pass: 192.168.0.10:5555 disappears from adb devices.
+  await dm.refresh();
+
+  assert.ok(adbStates.some((e) => e.id === "192.168.0.10:5555" && e.state === "offline"));
+  assert.ok(phases.some((e) => e.id === "192.168.0.10:5555" && e.phase === "offline"));
+  assert.ok(devices.includes("192.168.0.10:5555"), "the 'device' event must fire too");
+  assert.equal(dm.get("192.168.0.10:5555")?.phase, "offline");
+});
+
+test("DeviceManager emits offline events when adb fails entirely (markAllOffline)", async () => {
+  // Regression: when `adb devices` throws, markAllOffline() used to update every
+  // device silently. The fix emits device/adb-state/phase for each.
+  const runner = stubRunner([["List of devices attached", "emulator-5554\tdevice"]]);
+  const dm = new DeviceManager({ runner });
+  await dm.refresh();
+  assert.equal(dm.get("emulator-5554")?.phase, "online");
+
+  const adbStates: string[] = [];
+  const phases: string[] = [];
+  dm.on("adb-state", (_id: string, state: string) => adbStates.push(state));
+  dm.on("phase", (_id: string, phase: string) => phases.push(phase));
+
+  const failing: CommandRunner = {
+    async run() {
+      throw new Error("adb missing");
+    },
+    async runForDevice() {
+      throw new Error("adb missing");
+    },
+  };
+  // Same manager, new runner that throws: refresh triggers markAllOffline.
+  (dm as unknown as { runner: CommandRunner }).runner = failing;
+  await dm.refresh();
+
+  assert.equal(dm.get("emulator-5554")?.phase, "offline");
+  assert.ok(adbStates.includes("offline"), "adb-state offline must be emitted");
+  assert.ok(phases.includes("offline"), "phase offline must be emitted");
+});
+
 test("DeviceManager keeps a custom phase across refreshes", async () => {
   const runner = stubRunner([
     ["List of devices attached", "emulator-5554\tdevice"],

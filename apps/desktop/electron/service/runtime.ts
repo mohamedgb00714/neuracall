@@ -1,16 +1,25 @@
 import { EventEmitter } from "node:events";
 import { resolve } from "node:path";
 import type { AppConfig } from "@neuracall/config";
-import { RealtimeSessionManager, type SessionKey, type TurnEvent } from "@neuracall/aai-client";
+import {
+  RealtimeSessionManager,
+  type RealtimeParams,
+  type SessionKey,
+  type TurnEvent,
+} from "@neuracall/aai-client";
 import {
   DeviceManager,
   AndroidCallController,
+  VoipDialer,
+  buildDialCommand,
   realRunner,
   defaultSpawner,
   type CommandRunner,
   type CallState,
   type Device,
   type DevicePhase,
+  type DialCommand,
+  type VoipDialerOptions,
 } from "@neuracall/device-manager";
 import {
   detectAdb,
@@ -29,6 +38,7 @@ import {
   mergeTtsEnv,
   type NeuraCallSettings,
 } from "./settings.js";
+import { voiceAgentFor } from "./voipAgents.js";
 
 export interface TurnKeyed {
   key: SessionKey;
@@ -42,6 +52,12 @@ export interface RuntimeOptions {
   knownEndpoints?: string[];
   /** Telephony call-state poll interval per online phone (ms). 0 disables. Default 2000. */
   callPollIntervalMs?: number;
+  /**
+   * Builds the dialer that places an outbound WhatsApp voice call. The default
+   * wraps the runtime's adb runner in a `VoipDialer` for the dial's country
+   * code; tests stub it so no phone is touched.
+   */
+  buildVoipDialer?: (opts: VoipDialerOptions) => VoipDialer;
   /** Overrides the settings' capture source. Mostly for tests. */
   audioSource?: ScrcpyAudioSource;
   /** App data root for recordings and the call log. Default "<cwd>/data". */
@@ -60,6 +76,31 @@ export interface CaptureUpdate extends CaptureSession {
 }
 
 /**
+ * The operator's STT tuning, mapped from the AppConfig the runtime runs on to
+ * the realtime params the socket understands. Kept in one place so the Listen
+ * path and the Autopilot path cannot drift apart: both should send exactly the
+ * same per-params configuration for the same settings.
+ */
+type RealtimeTuning = Partial<
+  Pick<
+    RealtimeParams,
+    "language_codes" | "vad_threshold" | "min_turn_silence" | "max_turn_silence" | "session_heartbeat"
+  >
+>;
+
+function sttTuning(aai: AppConfig["assemblyai"]): RealtimeTuning {
+  return {
+    ...(aai.languageCodes && aai.languageCodes.length > 0
+      ? { language_codes: aai.languageCodes }
+      : {}),
+    ...(aai.vadThreshold !== undefined ? { vad_threshold: aai.vadThreshold } : {}),
+    ...(aai.minTurnSilence !== undefined ? { min_turn_silence: aai.minTurnSilence } : {}),
+    ...(aai.maxTurnSilence !== undefined ? { max_turn_silence: aai.maxTurnSilence } : {}),
+    ...(aai.sessionHeartbeat ? { session_heartbeat: true } : {}),
+  };
+}
+
+/**
  * NeuraCall runtime — the service layer hosted in the desktop app's main
  * process. Owns the AssemblyAI realtime session manager, the ADB device pool,
  * per-device scrcpy audio capture and call control, and exposes safe,
@@ -73,6 +114,42 @@ export interface CaptureUpdate extends CaptureSession {
  *  - "capture-log" (deviceId, line, isError)
  *  - "whatsapp-text" (line, isError)      the text bridge's webhook/agent log
  */
+/**
+ * Whether STT may run for a device in the given phase. STT bills per minute,
+ * so it must never run without a call: only a ringing or in-progress call
+ * justifies a session. Exported for unit tests.
+ */
+export function canOpenStt(phase: DevicePhase | undefined): boolean {
+  return phase === "incoming" || phase === "in-call";
+}
+
+/**
+ * The immutable facts of the runtime's WhatsApp dial path, distilled so they
+ * can be asserted without a phone: the exact intent that opens the
+ * conversation (`command`, via the voipDialer seam `buildDialCommand`) and the
+ * phase the device is tracked as once the dial has been issued (`phase`).
+ * `dialWhatsApp` executes `command` through a `VoipDialer` and lands the
+ * device on `phase`. The full Runtime is not constructible in unit tests — it
+ * owns the adb pool on the real runner, the realtime session stack and scrcpy
+ * capture, with no injection for a stub device — so the dial path is asserted
+ * through this seam.
+ */
+export interface OutboundVoipDialPlan {
+  command: DialCommand;
+  phase: DevicePhase;
+}
+
+/** Compose the WhatsApp dial path for `number`, promoted with `defaultCountryCode`. */
+export function planOutboundVoipDial(
+  number: string,
+  defaultCountryCode: string,
+): OutboundVoipDialPlan {
+  return {
+    command: buildDialCommand("whatsapp", number, defaultCountryCode),
+    phase: "in-call",
+  };
+}
+
 export class Runtime extends EventEmitter {
   /**
    * Mutated in place by `reloadSettings` rather than replaced: the session
@@ -89,9 +166,11 @@ export class Runtime extends EventEmitter {
   /**
    * Sessions the operator opened with Listen, as "deviceId/channelId".
    *
-   * These share a manager with autopilot's, and they deliberately have no call
-   * behind them — which is precisely the shape the watchdog's stray sweep
-   * closes. Membership here is what tells the two apart.
+   * These share a manager with autopilot's, and they are guarded the same way
+   * autopilot's are: no STT without an active call. A Listen session is open
+   * only while the device is ringing or on a call; once the phase returns to
+   * online the watchdog's stray sweep closes it. Membership here is what keeps
+   * a session *on* a call from being swept as stray.
    */
   private readonly manualSessions = new Set<string>();
   private readonly callPollIntervalMs: number;
@@ -256,17 +335,28 @@ export class Runtime extends EventEmitter {
         audioSource: this.captureSource,
         realtimeMode: assemblyai.mode,
         keyterms: assemblyai.keyterms,
+        // The STT fine-tuning lives on the shared AppConfig so it reaches the
+        // orchestrator's composed realtime path (and, through the bridge, the
+        // Voice Agent path) — the same object speechModel is read from.
+        realtimeParams: sttTuning(this.appConfig.assemblyai),
         maxCallMs: autopilot.maxCallMs,
         stallMs: autopilot.stallMs,
-        // The Listen button opens sessions on this same manager on purpose,
-        // and a session with no call is exactly what the watchdog's stray
-        // sweep hunts for. Without this it closes them a few seconds after the
-        // operator presses Listen, and the captions just stop.
-        isSessionSweepable: (key) => !this.manualSessions.has(`${key.deviceId}/${key.channelId}`),
+        // A manual Listen session is protected from the stray sweep only while
+        // its device is actually on a call. When the call is gone the session
+        // is stray and closes, the same as any other — STT must not keep
+        // running against an idle phone.
+        isSessionSweepable: (key) =>
+          !(
+            this.manualSessions.has(`${key.deviceId}/${key.channelId}`) &&
+            canOpenStt(this.devices.get(key.deviceId)?.phase)
+          ),
         // Settings sit above the environment, but only where they say
         // something: the merged env keeps hints that have no UI (PIPER_MODEL,
         // TTS_COMMAND) working.
         ttsEnv: mergeTtsEnv(process.env, this.settings),
+        // Per-phone agents (Settings → voipAgents): a device with one carries
+        // its own stored agent / persona instead of the global configuration.
+        voiceAgentFor: voiceAgentFor(this.settings),
         ...(audio.injectSink ? { injectSink: audio.injectSink } : {}),
         ...(autopilot.healthPort !== null ? { healthPort: autopilot.healthPort } : {}),
         ...(autopilot.defaultCountryCode
@@ -380,6 +470,15 @@ export class Runtime extends EventEmitter {
   private applyConfig(settings: NeuraCallSettings): void {
     const merged = buildAppConfig(this.appConfig.assemblyai.apiKey, settings);
     Object.assign(this.appConfig.assemblyai, merged.assemblyai);
+    // An unset tuning field is absent from `merged` — null/[]/false are
+    // expressed as "not there" — and Object.assign would leave the previous
+    // value in place, so clearing vadThreshold or turning Heartbeats off would
+    // silently keep the old value on the socket. Land each one explicitly.
+    this.appConfig.assemblyai.languageCodes = merged.assemblyai.languageCodes;
+    this.appConfig.assemblyai.vadThreshold = merged.assemblyai.vadThreshold;
+    this.appConfig.assemblyai.minTurnSilence = merged.assemblyai.minTurnSilence;
+    this.appConfig.assemblyai.maxTurnSilence = merged.assemblyai.maxTurnSilence;
+    this.appConfig.assemblyai.sessionHeartbeat = merged.assemblyai.sessionHeartbeat;
     // Assigned field by field rather than merged: a cleared key is absent from
     // `merged`, and Object.assign would leave the old one in place.
     this.appConfig.llm.apiKey = merged.llm.apiKey;
@@ -408,12 +507,22 @@ export class Runtime extends EventEmitter {
   /**
    * Open a realtime STT session for one device/channel and, when scrcpy is
    * installed, start streaming the phone's audio into it.
+   *
+   * Refuses to open unless the device is on a call (ringing or in progress):
+   * a session on an idle phone costs money and transcribes ambient silence.
    */
   async startSession(
     deviceId: string,
     channelId: string,
     opts: { capture?: boolean; source?: ScrcpyAudioSource } = {},
   ) {
+    if (!canOpenStt(this.devices.get(deviceId)?.phase)) {
+      const phase = this.devices.get(deviceId)?.phase ?? "unknown";
+      throw new Error(
+        `no STT session for ${deviceId}/${channelId}: no active call on the device ` +
+          `(phase: ${phase})`,
+      );
+    }
     // Marked before the socket opens: the watchdog sweeps on its own timer and
     // must never see this key unprotected, however slow the open is.
     this.manualSessions.add(`${deviceId}/${channelId}`);
@@ -428,6 +537,7 @@ export class Runtime extends EventEmitter {
             speechModel: this.appConfig.assemblyai.speechModel,
             mode: this.settings.assemblyai.mode,
             ...(keyterms.length > 0 ? { keyterms_prompt: keyterms } : {}),
+            ...sttTuning(this.appConfig.assemblyai),
           },
         },
       );
@@ -492,6 +602,22 @@ export class Runtime extends EventEmitter {
   async dial(deviceId: string, number: string): Promise<void> {
     await this.controller(deviceId).dial(number);
     this.devices.setPhase(deviceId, "in-call");
+  }
+
+  /**
+   * Place an outbound WhatsApp voice call: open the conversation by deep link,
+   * then tap the voice-call button on the opened chat. The far end rings, so —
+   * like the cellular `dial` path — the device is moved to in-call once the
+   * dial has been issued, and STT gating (`canOpenStt`) and the call-state
+   * poll match reality. `cc` overrides the settings' default country code for
+   * promoting a national number to international form.
+   */
+  async dialWhatsApp(deviceId: string, number: string, cc?: string): Promise<void> {
+    const defaultCountryCode = cc ?? this.settings.autopilot.defaultCountryCode;
+    const build =
+      this.opts.buildVoipDialer ?? ((opts: VoipDialerOptions) => new VoipDialer(this.runner, opts));
+    await build({ defaultCountryCode }).call(deviceId, "whatsapp", number);
+    this.devices.setPhase(deviceId, planOutboundVoipDial(number, defaultCountryCode).phase);
   }
 
   /** Open the phone's dialer, optionally prefilled. Nothing is placed. */

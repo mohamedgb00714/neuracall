@@ -117,6 +117,58 @@ test("concurrency bound queues excess opens until a slot frees", async () => {
   assert.equal(manager.activeCount, 0);
 });
 
+test("releasing one slot grants exactly one waiter, not the whole queue", async () => {
+  // Regression (3009 concurrency over-limit): drainQueue used to be a
+  // `while (sessions.size < maxConcurrent)` loop. A granted waiter adds its
+  // session asynchronously (a later microtask), so sessions.size had not grown
+  // yet when the loop ran — freeing ONE slot popped EVERY waiter and opened
+  // them all, blowing past maxConcurrent. Each release maps to exactly one freed
+  // slot, so it must pop at most one waiter.
+  const servers: MockA2I[] = [];
+  const manager = new RealtimeSessionManager(testConfig(), {
+    maxConcurrent: 2,
+    wsFactory: () => {
+      const server = new MockA2I({ transcript: "granted" });
+      servers.push(server);
+      return server.socket;
+    },
+  });
+
+  // Fill both slots.
+  const keys: SessionKey[] = [
+    { deviceId: "dev-A", channelId: "one" },
+    { deviceId: "dev-A", channelId: "two" },
+    { deviceId: "dev-A", channelId: "three" },
+    { deviceId: "dev-A", channelId: "four" },
+  ];
+  await manager.open(keys[0]!, { params: TEST_PARAMS });
+  await manager.open(keys[1]!, { params: TEST_PARAMS });
+  assert.equal(manager.activeCount, 2);
+
+  // Queue two waiters behind the full pool.
+  const openingC = manager.open(keys[2]!, { params: TEST_PARAMS });
+  const openingD = manager.open(keys[3]!, { params: TEST_PARAMS });
+  assert.equal(manager.queuedCount, 2);
+  assert.equal(manager.activeCount, 2, "no session may open while the pool is full");
+
+  // Free ONE slot (A). Exactly one queued waiter may proceed to open; the pool
+  // must never exceed maxConcurrent=2. A while-loop drain would let BOTH C and
+  // D open here, pushing activeCount to 3.
+  await manager.close(keys[0]!);
+  assert.equal(manager.activeCount, 2, "freeing one slot must not exceed maxConcurrent");
+
+  // Free another slot (B): the last waiter (now the only one) opens. Still 2.
+  await manager.close(keys[1]!);
+  assert.equal(manager.activeCount, 2, "pool stays bounded as waiters drain one at a time");
+
+  // Both waiters eventually resolved.
+  assert.ok(await openingC, "first waiter opened");
+  assert.ok(await openingD, "second waiter opened");
+
+  await manager.closeAll("test over");
+  assert.equal(manager.activeCount, 0);
+});
+
 test("a session error with no subscriber does not crash the host process", async () => {
   // Node throws ERR_UNHANDLED_ERROR when an "error" event has no listener, so
   // an ordinary recoverable A2I failure must not be emitted unguarded — that

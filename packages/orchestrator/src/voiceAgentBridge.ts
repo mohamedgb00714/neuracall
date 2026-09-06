@@ -45,7 +45,9 @@ import {
   VOICE_AGENT_SAMPLE_RATE,
   VoiceAgentSession,
   type VoiceAgentInlineConfig,
+  type VoiceAgentInputConfig,
   type VoiceAgentOptions,
+  type VoiceAgentTurnDetection,
 } from "@neuracall/aai-client";
 import { Pcm16Resampler, type AudioInjector } from "@neuracall/audio-pipeline";
 import type { ChannelKind } from "@neuracall/device-manager";
@@ -63,6 +65,12 @@ const DEFAULT_REPLY_TIMEOUT_MS = 20_000;
  */
 const DEFAULT_GREETING_TIMEOUT_MS = 2_000;
 
+/**
+ * What one call's session is bound to: a stored agent's id, or an inline
+ * persona. Exactly one, because the service refuses a session carrying both.
+ */
+export type VoiceAgentClientConfig = { agentId: string } | { session: VoiceAgentInlineConfig };
+
 export interface VoiceAgentBridgeOptions {
   /** AssemblyAI key. Never logged, never sent anywhere but the socket. */
   apiKey: string;
@@ -73,6 +81,13 @@ export interface VoiceAgentBridgeOptions {
   agentId?: string;
   /** Inline session configuration, for an agent that needs no stored record. */
   session?: VoiceAgentInlineConfig;
+  /**
+   * Per-device agent selection. When every phone answering through this bridge
+   * should carry its *own* stored agent (or its own inline persona), resolve
+   * it here per `deviceId`. Return `undefined` to fall back to the static
+   * `agentId`/`session` above.
+   */
+  sessionFor?: (key: { deviceId: string; channelId: string }) => VoiceAgentClientConfig | undefined;
   /** Override the endpoint. Comes from `AppConfig.voiceAgent.wsUrl`. */
   wsUrl?: string;
   /**
@@ -121,6 +136,8 @@ function keyOf(key: { deviceId: string; channelId: string }): string {
  */
 class VoiceAgentCall extends EventEmitter implements SttStream {
   readonly session: VoiceAgentSession;
+  /** What this call is bound to; decides session.update and the greeting wait. */
+  readonly config: VoiceAgentClientConfig;
 
   /** 16 kHz call audio -> 24 kHz for the service. */
   private readonly toAgent: Pcm16Resampler;
@@ -160,10 +177,12 @@ class VoiceAgentCall extends EventEmitter implements SttStream {
       callSampleRate: number;
       injector: AudioInjector | undefined;
       replyTimeoutMs: number;
+      config: VoiceAgentClientConfig;
     },
   ) {
     super();
     this.session = session;
+    this.config = opts.config;
     this.injector = opts.injector;
     this.replyTimeoutMs = opts.replyTimeoutMs;
     this.toAgent = new Pcm16Resampler(opts.callSampleRate, VOICE_AGENT_SAMPLE_RATE);
@@ -399,7 +418,7 @@ export class VoiceAgentBridge implements SttSessionManager {
 
   async open(
     key: { deviceId: string; channelId: string },
-    _opts: { params: RealtimeParams },
+    opts: { params: RealtimeParams },
   ): Promise<SttStream> {
     await this.close(key, "reopening");
 
@@ -412,11 +431,13 @@ export class VoiceAgentBridge implements SttSessionManager {
       injector = undefined;
     }
 
-    const session = this.createSession();
+    const config = this.clientConfigFor(key);
+    const session = this.createSession(key, config, opts.params);
     const call = new VoiceAgentCall(session, {
       callSampleRate: this.opts.callSampleRate ?? 16000,
       injector,
       replyTimeoutMs: this.opts.replyTimeoutMs ?? DEFAULT_REPLY_TIMEOUT_MS,
+      config,
     });
 
     // Connect before returning: the orchestrator starts pumping audio as soon
@@ -446,14 +467,51 @@ export class VoiceAgentBridge implements SttSessionManager {
     await call.close();
   }
 
-  private createSession(): VoiceAgentSession {
+  private clientConfigFor(key: { deviceId: string; channelId: string }): VoiceAgentClientConfig {
+    const perKey = this.opts.sessionFor?.(key);
+    if (perKey) return perKey;
+    if (this.opts.agentId) return { agentId: this.opts.agentId };
+    return { session: this.opts.session ?? {} };
+  }
+
+  private createSession(
+    key: { deviceId: string; channelId: string },
+    config: VoiceAgentClientConfig,
+    params: RealtimeParams,
+  ): VoiceAgentSession {
     const options: VoiceAgentOptions = {
       apiKey: this.opts.apiKey,
-      ...(this.opts.agentId ? { agentId: this.opts.agentId } : {}),
-      ...(this.opts.session ? { session: this.opts.session } : {}),
+      ...("agentId" in config ? { agentId: config.agentId } : {}),
+      ...("session" in config ? { session: this.mergeSttParams(config.session, params) } : {}),
       ...(this.opts.wsUrl ? { url: this.opts.wsUrl } : {}),
     };
     return this.opts.createSession?.(options) ?? new VoiceAgentSession(options);
+  }
+
+  /**
+   * Thread the caller's realtime STT tuning into the Voice Agent config where a
+   * genuine equivalent exists. The two APIs name things differently, so this
+   * is a deliberate map, not a passthrough: `vad_threshold`/turn-silence become
+   * `turn_detection`, and `keyterms_prompt` becomes the recognition `keyterms`.
+   * Fields with no Voice Agent counterpart (mode, language_codes, …) are left
+   * alone rather than silently dropped or fake-mapped.
+   */
+  private mergeSttParams(
+    session: VoiceAgentInlineConfig,
+    params: RealtimeParams,
+  ): VoiceAgentInlineConfig {
+    const input: VoiceAgentInputConfig = { ...(session.input ?? {}) };
+
+    const turnDetection: VoiceAgentTurnDetection = { ...(input.turn_detection ?? {}) };
+    if (params.vad_threshold !== undefined) turnDetection.vad_threshold = params.vad_threshold;
+    if (params.min_turn_silence !== undefined) turnDetection.min_silence = params.min_turn_silence;
+    if (params.max_turn_silence !== undefined) turnDetection.max_silence = params.max_turn_silence;
+    if (Object.keys(turnDetection).length > 0) input.turn_detection = turnDetection;
+
+    const keyterms = params.keyterms_prompt ?? input.keyterms;
+    if (keyterms !== undefined) input.keyterms = keyterms;
+
+    return { ...session, input };
   }
 
   /** The call whose socket serves this turn, remembered by callId. */
@@ -490,7 +548,7 @@ export class VoiceAgentBridge implements SttSessionManager {
     // With an inline config we can see there is no greeting, so there is no
     // reason to hold up call setup waiting for one. A stored agent keeps its
     // configuration server-side and cannot be asked, so that case still waits.
-    if (this.opts.session && this.opts.session.greeting === undefined) return null;
+    if ("session" in call.config && call.config.session.greeting === undefined) return null;
     const reply = await call.takeGreeting(
       this.opts.greetingTimeoutMs ?? DEFAULT_GREETING_TIMEOUT_MS,
     );

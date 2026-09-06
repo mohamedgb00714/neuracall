@@ -110,3 +110,51 @@ test("VAD gates output for a loud-but-flat (non-speech) signal", () => {
   p.end();
   assert.equal(chunks.length, 0);
 });
+
+test("emitSilence=true still resets the utterance when silence returns (no unbroken utterance)", () => {
+  // Regression: with emitSilence=true (the default in the orchestrator) *every*
+  // frame is emitted, so the old `else if (inUtterance && !active)` end-detection
+  // was unreachable — inUtterance stayed true forever and consumers saw a single
+  // never-ending utterance. emitSilence must not defeat turn endpointing.
+  const { out, chunks } = collect();
+  const p = new AudioPipeline(
+    {
+      inputSampleRate: 16000,
+      inputChannels: 1,
+      chunkMs: 100,
+      vadThreshold: 0.01,
+      vadStartMs: 40,
+      vadHangoverMs: 20,
+      emitSilence: true,
+    },
+    out,
+  );
+  // 300ms of speech, then 300ms of silence, then another 300ms of speech.
+  p.push(SPEECH_3); // 3 speech chunks
+  p.push(SILENCE); // 1
+  p.push(SILENCE); // 1
+  p.push(SILENCE); // 1
+  p.push(SPEECH_3); // 3
+  p.push(SILENCE); // 1
+  p.push(SILENCE); // 1
+  p.push(SILENCE); // 1
+  p.end();
+
+  // With emitSilence every 100ms frame is emitted and counted.
+  assert.equal(chunks.length, 12, "all 1200ms of frames are emitted");
+  assert.equal(chunks[0]!.utteranceStart, true, "first voice chunk starts an utterance");
+
+  // The hangover closes the first utterance *on a silent chunk*, so the last
+  // speech chunk of run one carries utteranceEnd. Two runs must produce exactly
+  // two utterance ends — the second run proves inUtterance was reset rather
+  // than left stuck from the first.
+  const ends = chunks.filter((c) => c.utteranceEnd).length;
+  const starts = chunks.filter((c) => c.utteranceStart).length;
+  assert.equal(starts, 2, "each run starts an utterance exactly once");
+  assert.equal(ends, 2, "each run ends an utterance exactly once — inUtterance resets");
+
+  // Run two starts on the first speech chunk after the interleaving silence.
+  const firstStart = chunks.findIndex((c) => c.utteranceStart);
+  const secondStart = chunks.findIndex((c, i) => i > firstStart && c.utteranceStart);
+  assert.equal(secondStart, 6, "run two starts right after the 3-chunk silence");
+});

@@ -133,6 +133,9 @@ test("create POSTs the snake_case wire shape to /v1/agents", async () => {
         maxSilence: 1500,
         interruptResponse: true,
       },
+      transcriptionMode: "max_accuracy",
+      voiceFocus: "far-field",
+      voiceFocusThreshold: 0.8,
       keyterms: ["NeuraCall", "scrcpy"],
     },
     output: { volume: 80 },
@@ -169,6 +172,9 @@ test("create POSTs the snake_case wire shape to /v1/agents", async () => {
     max_silence: 1500,
     interrupt_response: true,
   });
+  assert.equal(body.input.transcription_mode, "max_accuracy");
+  assert.equal(body.input.voice_focus, "far-field");
+  assert.equal(body.input.voice_focus_threshold, 0.8);
   assert.deepEqual(body.input.keyterms, ["NeuraCall", "scrcpy"]);
   assert.deepEqual(body.output, {
     format: { encoding: "audio/pcm", sample_rate: 24000 },

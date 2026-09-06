@@ -183,14 +183,40 @@ test("every rejected value names the field it came from", () => {
       { autopilot: { defaultCountryCode: "morocco" } },
       "autopilot.defaultCountryCode",
     ],
-    [
-      "too many keyterms",
+    ["too many keyterms",
       { assemblyai: { keyterms: Array.from({ length: 101 }, (_, i) => `term-${i}`) } },
       "assemblyai.keyterms",
     ],
     ["an over-long keyterm", { assemblyai: { keyterms: ["x".repeat(51)] } }, "assemblyai.keyterms"],
     ["a non-string keyterm", { assemblyai: { keyterms: [42] } }, "assemblyai.keyterms"],
     ["keyterms that are not a list", { assemblyai: { keyterms: "a,b" } }, "assemblyai.keyterms"],
+    ["a vad threshold above 1", { assemblyai: { vadThreshold: 1.1 } }, "assemblyai.vadThreshold"],
+    ["a negative vad threshold", { assemblyai: { vadThreshold: -0.1 } }, "assemblyai.vadThreshold"],
+    ["a bad vad threshold spelling", { assemblyai: { vadThreshold: "o.5" } }, "assemblyai.vadThreshold"],
+    ["silence below the floor", { assemblyai: { minTurnSilence: 49 } }, "assemblyai.minTurnSilence"],
+    ["silence above the ceiling", { assemblyai: { maxTurnSilence: 10001 } }, "assemblyai.maxTurnSilence"],
+    ["fractional silence", { assemblyai: { minTurnSilence: 2000.5 } }, "assemblyai.minTurnSilence"],
+    [
+      "language codes that are not a list",
+      { assemblyai: { languageCodes: "en,fr" } },
+      "assemblyai.languageCodes",
+    ],
+    ["a non-string language code", { assemblyai: { languageCodes: [42] } }, "assemblyai.languageCodes"],
+    [
+      "too many language codes",
+      { assemblyai: { languageCodes: Array.from({ length: 21 }, (_, i) => `l${i}`) } },
+      "assemblyai.languageCodes",
+    ],
+    [
+      "an over-long language code",
+      { assemblyai: { languageCodes: ["x".repeat(11)] } },
+      "assemblyai.languageCodes",
+    ],
+    [
+      "a bad heartbeat spelling",
+      { assemblyai: { sessionHeartbeat: "flase" } },
+      "assemblyai.sessionHeartbeat",
+    ],
     ["a numeric secret", { llm: { apiKey: 12345 } }, "llm.apiKey"],
     ["a section that is not an object", { llm: [] }, "llm"],
     ["a payload that is not an object", "settings", "settings"],
@@ -221,6 +247,40 @@ test("values at the edge of each range are accepted", () => {
   assert.equal(
     parseSettingsPatch({ autopilot: { healthPort: "9464" } }).autopilot?.healthPort,
     9464,
+  );
+});
+
+test("the STT tuning fields round-trip through a patch, including unset", () => {
+  const set = parseSettingsPatch({
+    assemblyai: {
+      languageCodes: [" en", "fr"],
+      vadThreshold: 0.6,
+      minTurnSilence: 50,
+      maxTurnSilence: 10000,
+      sessionHeartbeat: false,
+    },
+  });
+  assert.deepEqual(set.assemblyai?.languageCodes, ["en", "fr"], "entries are trimmed, blanks dropped");
+  assert.equal(set.assemblyai?.vadThreshold, 0.6);
+  assert.equal(set.assemblyai?.minTurnSilence, 50);
+  assert.equal(set.assemblyai?.maxTurnSilence, 10000);
+  assert.equal(set.assemblyai?.sessionHeartbeat, false);
+  assert.equal(
+    parseSettingsPatch({ assemblyai: { vadThreshold: "0.5" } }).assemblyai?.vadThreshold,
+    0.5,
+    "a numeric string is accepted, as the environment layer sends numbers as strings",
+  );
+
+  // null/"" mean "back to the service default", exactly like healthPort.
+  assert.equal(parseSettingsPatch({ assemblyai: { vadThreshold: null } }).assemblyai?.vadThreshold, null);
+  assert.equal(parseSettingsPatch({ assemblyai: { vadThreshold: "" } }).assemblyai?.vadThreshold, null);
+  assert.equal(
+    parseSettingsPatch({ assemblyai: { minTurnSilence: null } }).assemblyai?.minTurnSilence,
+    null,
+  );
+  assert.equal(
+    parseSettingsPatch({ assemblyai: { maxTurnSilence: "" } }).assemblyai?.maxTurnSilence,
+    null,
   );
 });
 
@@ -256,6 +316,11 @@ test("precedence is defaults < environment < settings.json", () => {
       ASSEMBLYAI_REGION: "EU",
       ASSEMBLYAI_MODE: "max_accuracy",
       ASSEMBLYAI_KEYTERMS: "NeuraCall, SKU-1 ,",
+      ASSEMBLYAI_LANGUAGE_CODES: "en, fr ,ar",
+      ASSEMBLYAI_VAD_THRESHOLD: "0.6",
+      ASSEMBLYAI_MIN_TURN_SILENCE: "2000",
+      ASSEMBLYAI_MAX_TURN_SILENCE: "6000",
+      ASSEMBLYAI_SESSION_HEARTBEAT: "on",
       LLM_MODEL: "from/env",
       LLM_API_KEY: LLM_KEY,
       NEURACALL_HEALTH_PORT: "9464",
@@ -267,12 +332,21 @@ test("precedence is defaults < environment < settings.json", () => {
     assert.equal(fresh.current.assemblyai.region, "eu", "the environment beats the default");
     assert.equal(fresh.current.assemblyai.mode, "max_accuracy");
     assert.deepEqual(fresh.current.assemblyai.keyterms, ["NeuraCall", "SKU-1"]);
+    assert.deepEqual(fresh.current.assemblyai.languageCodes, ["en", "fr", "ar"]);
+    assert.equal(fresh.current.assemblyai.vadThreshold, 0.6);
+    assert.equal(fresh.current.assemblyai.minTurnSilence, 2000);
+    assert.equal(fresh.current.assemblyai.maxTurnSilence, 6000);
+    assert.equal(fresh.current.assemblyai.sessionHeartbeat, true);
     assert.equal(fresh.current.llm.model, "from/env");
     assert.equal(fresh.current.autopilot.healthPort, 9464);
     assert.equal(
       fresh.current.autopilot.stallMs,
       defaultSettings().autopilot.stallMs,
       "what the environment says nothing about stays at the default",
+    );
+    assert.equal(
+      fresh.current.assemblyai.speechModel,
+      defaultSettings().assemblyai.speechModel,
     );
     assert.deepEqual(fresh.problems, []);
 
@@ -295,6 +369,41 @@ test("precedence is defaults < environment < settings.json", () => {
   });
 });
 
+test("an unsettable health port (0) does not discard the whole environment layer", () => {
+  // Regression: NEURACALL_HEALTH_PORT=0 used to flow into parseSettingsPatch,
+  // which rejects 0 — and baseline() swallowed that throw by discarding the
+  // *entire* environment layer. Every other variable in .env silently stopped
+  // applying. envPort() now treats out-of-range as "say nothing", so the rest
+  // of the layer survives and healthPort keeps its default.
+  withTempDir((_dir, file) => {
+    const env: NodeJS.ProcessEnv = {
+      NEURACALL_HEALTH_PORT: "0",
+      NEURACALL_COUNTRY_CODE: "+212",
+    };
+
+    const store = new SettingsStore({ file, env });
+    store.load();
+
+    // The innocuous variable survives: the layer was applied, not discarded.
+    assert.equal(store.current.autopilot.defaultCountryCode, "212");
+    assert.equal(
+      store.current.autopilot.healthPort,
+      defaultSettings().autopilot.healthPort,
+      "healthPort keeps its default for a rejected env value",
+    );
+    // And no "ignoring the environment layer" problem was recorded.
+    assert.deepEqual(store.problems, []);
+  });
+});
+
+test("a valid NEURACALL_HEALTH_PORT still maps to that healthPort", () => {
+  withTempDir((_dir, file) => {
+    const store = new SettingsStore({ file, env: { NEURACALL_HEALTH_PORT: "9464" } });
+    store.load();
+    assert.equal(store.current.autopilot.healthPort, 9464);
+  });
+});
+
 test("an unedited .env.example contributes nothing", () => {
   const raw = settingsFromEnv({
     LLM_API_KEY: "replace-me",
@@ -302,6 +411,58 @@ test("an unedited .env.example contributes nothing", () => {
     ASSEMBLYAI_REGION: "",
   });
   assert.deepEqual(raw, {}, "placeholders and blanks must read as unset");
+});
+
+test("settingsFromEnv maps the ASSEMBLYAI_* STT tuning vars to their settings fields", () => {
+  const raw = settingsFromEnv({
+    ASSEMBLYAI_LANGUAGE_CODES: " en,fr ,ar",
+    ASSEMBLYAI_VAD_THRESHOLD: "0.6",
+    ASSEMBLYAI_MIN_TURN_SILENCE: "2000",
+    ASSEMBLYAI_MAX_TURN_SILENCE: "6000",
+    ASSEMBLYAI_SESSION_HEARTBEAT: "on",
+  }) as { assemblyai?: Record<string, unknown> };
+
+  assert.deepEqual(raw.assemblyai?.["languageCodes"], ["en", "fr", "ar"]);
+  assert.equal(raw.assemblyai?.["vadThreshold"], 0.6);
+  assert.equal(raw.assemblyai?.["minTurnSilence"], 2000);
+  assert.equal(raw.assemblyai?.["maxTurnSilence"], 6000);
+  // The boolean stays a string for parseSettingsPatch's boolean() to judge,
+  // exactly like VOICE_AGENT_ENABLED — a misspelling must be loud.
+  assert.equal(raw.assemblyai?.["sessionHeartbeat"], "on");
+});
+
+test("a bad tuning number says nothing, so the rest of the environment survives", () => {
+  // Regression guard for the same bug envPort guards: if a malformed tuning
+  // value flowed into parseSettingsPatch, baseline() would reject the *whole*
+  // environment layer — every other variable — over one typo. These parse
+  // leniently instead, so the country code below still lands.
+  const raw = settingsFromEnv({
+    ASSEMBLYAI_VAD_THRESHOLD: "banana",
+    ASSEMBLYAI_MIN_TURN_SILENCE: "0",
+    ASSEMBLYAI_MAX_TURN_SILENCE: "2500.5",
+    NEURACALL_COUNTRY_CODE: "+212",
+  }) as Record<string, unknown>;
+
+  assert.equal(raw["assemblyai"], undefined, "unsettable tuning vars drop the whole section");
+  assert.deepEqual(raw["autopilot"], { defaultCountryCode: "+212" });
+});
+
+test("a bad ASSEMBLYAI_SESSION_HEARTBEAT spelling is loud, not silently \"off\"", () => {
+  withTempDir((_dir, file) => {
+    const store = new SettingsStore({
+      file,
+      env: {
+        ASSEMBLYAI_SESSION_HEARTBEAT: "flase",
+        NEURACALL_COUNTRY_CODE: "+212",
+      },
+    });
+    store.load();
+
+    // The boolean() validator throws, so baseline reports the problem rather
+    // than interpreting "flase" as off — the VOICE_AGENT_ENABLED convention.
+    assert.equal(store.problems.length, 1);
+    assert.ok(store.problems.join("\n").includes("assemblyai.sessionHeartbeat"));
+  });
 });
 
 test("a bad environment value is reported, not thrown, and the defaults hold", () => {

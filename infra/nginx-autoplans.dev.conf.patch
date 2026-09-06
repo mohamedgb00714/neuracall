@@ -1,0 +1,68 @@
+# =============================================================================
+# /etc/nginx/sites-enabled/autoplans.dev  --  DROP-IN REPLACEMENT (patched)
+#
+# autoplans.dev vhost: drops vulnerability-scanner & credential-probe noise at
+# the edge (answers 410/403 itself) BEFORE proxying to :3000, so probes never
+# reach the Next.js app and never create 404 telemetry groups.
+#
+# Installed together with the map file:
+#     /etc/nginx/sites-enabled/nginx-block-404-noise.conf
+# If the vhost is installed without the maps, `nginx -t` fails with
+# "unknown 'blocked' variable" - the maps are required, on purpose.
+#
+# ---- ORIGINAL (19 lines) - kept for rollback / diff reference ----
+#   server {
+#       listen 80 default_server;
+#       listen [::]:80 default_server;
+#       server_name autoplans.dev www.autoplans.dev 209.74.95.228 _;
+#
+#       location / {
+#           proxy_pass http://localhost:3000;
+#           proxy_http_version 1.1;
+#           proxy_set_header Upgrade $http_upgrade;
+#           proxy_set_header Connection 'upgrade';
+#           proxy_set_header Host $host;
+#           proxy_cache_bypass $http_upgrade;
+#           proxy_set_header X-Real-IP $remote_addr;
+#           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#           proxy_set_header X-Forwarded-Proto $scheme;
+#           proxy_read_timeout 300s;
+#           proxy_connect_timeout 75s;
+#       }
+#   }
+# --------------------------------------------------------------------
+#
+# The default_server "_" behaviour is untouched: requests to the raw IP or to
+# unknown Host headers (the bulk of scanner traffic) still land in THIS server
+# block and get the same block rules.
+# =============================================================================
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name autoplans.dev www.autoplans.dev 209.74.95.228 _;
+
+    location / {
+        # Scanner-noise gates. $blocked / $ua_blocked come from maps in
+        # nginx-block-404-noise.conf (same directory / http context).
+        #   410 Gone   - path matches the scanner blocklist (answer, no proxy)
+        #   403 Forbidden - known automated scanner User-Agent
+        # Both complete the request here; proxy_pass below never runs for them.
+        # NOTE: /api/csp-report, /api/*, /docs, /_next/*, /.well-known/... are
+        # deliberately NOT blocked - only dump-shaped files and fake namespaces.
+        if ($blocked)    { return 410; }
+        if ($ua_blocked) { return 403; }
+
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 75s;
+    }
+}

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { CommandRunner } from "../src/adb.js";
 import {
   VoipDialer,
+  buildDialCommand,
   deepLinkDigits,
   findVoiceCallButton,
   isVideoCallLabel,
@@ -68,7 +69,25 @@ test("channels without an implementation say so instead of guessing", () => {
   assert.equal(supportsVoipDial("zoom"), false);
   const dialer = new VoipDialer({ run: async () => "", runForDevice: async () => "" });
   assert.throws(() => dialer.chatLink("zoom", "+213541685472"), /not implemented for "zoom"/);
-  assert.equal(dialer.chatLink("whatsapp", "+213541685472"), "https://wa.me/213541685472");
+  // wa.me resolves to the system resolver on the realme (Chrome shares the
+  // handler); the whatsapp:// scheme reaches WhatsApp alone.
+  assert.equal(dialer.chatLink("whatsapp", "+213541685472"), "whatsapp://send?phone=213541685472");
+});
+
+test("buildDialCommand returns the exact am start argv", () => {
+  const cmd = buildDialCommand("whatsapp", "+213541685472", "213");
+  assert.equal(cmd.channel, "whatsapp");
+  assert.equal(cmd.link, "whatsapp://send?phone=213541685472");
+  assert.deepEqual(cmd.args, [
+    "shell",
+    "am",
+    "start",
+    "-a",
+    "android.intent.action.VIEW",
+    "-d",
+    "whatsapp://send?phone=213541685472",
+  ]);
+  assert.throws(() => buildDialCommand("zoom", "+213541685472"), /not implemented for "zoom"/);
 });
 
 test("calling opens the chat then taps the voice button", async () => {
@@ -93,7 +112,7 @@ test("calling opens the chat then taps the voice button", async () => {
   assert.equal(result.buttonLabel, "Appel vocal");
   assert.equal(result.digits, "213541685472");
   assert.ok(
-    calls.some((a) => a.join(" ").includes("https://wa.me/213541685472")),
+    calls.some((a) => a.join(" ").includes("whatsapp://send?phone=213541685472")),
     "the chat deep link was not opened",
   );
   assert.ok(

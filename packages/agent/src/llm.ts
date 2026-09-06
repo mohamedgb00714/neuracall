@@ -52,7 +52,12 @@ export interface OpenAiCompatibleLlmClientOptions {
   timeoutMs?: number;
 }
 
-const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
+/**
+ * The API root used when none is configured. Exported so the default TTS can
+ * reuse it: a voice has to travel through the same gateway the text does, or
+ * an OpenRouter key would be sent to api.openai.com and every reply would fail.
+ */
+export const DEFAULT_LLM_BASE_URL = "https://openrouter.ai/api/v1";
 
 /** Speaks the OpenAI `/chat/completions` protocol. */
 export class OpenAiCompatibleLlmClient implements LlmClient {
@@ -67,7 +72,7 @@ export class OpenAiCompatibleLlmClient implements LlmClient {
   }
 
   async complete(request: LlmRequest): Promise<string> {
-    const baseUrl = (this.opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    const baseUrl = (this.opts.baseUrl ?? DEFAULT_LLM_BASE_URL).replace(/\/+$/, "");
     const timeoutMs = this.opts.timeoutMs ?? 20_000;
 
     // A slow model must not hold a live call open indefinitely, but a caller

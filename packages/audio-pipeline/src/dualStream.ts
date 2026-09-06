@@ -82,7 +82,10 @@ export interface CallAudioChunk extends AudioChunk, CallIdentity {
  * A destination that can put PCM onto the phone's call uplink so the far end
  * hears it. Implementations differ per platform (a virtual mic fed over a
  * loopback sink, a Bluetooth HFP gateway, an on-device helper app); see
- * docs/AUDIO-ABI.md. Phase 5's TTS task supplies the real one.
+ * docs/AUDIO-ABI.md. Host-side playback uses @neuracall/orchestrator's
+ * CommandAudioInjector (aplay/ffplay streaming raw PCM on stdin); pushing PCM
+ * into an active call's uplink is still open (see the audio-injection
+ * transport task).
  *
  * `write` takes Int16 LE PCM at exactly `sampleRate`/`channels` —
  * `LocalOutStream` converts to those before calling, so implementations never

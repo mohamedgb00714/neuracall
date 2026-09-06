@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { isVoiceId } from "@neuracall/aai-client";
 import {
   SettingsStore,
+  applyPatch,
   buildAppConfig,
   defaultSettings,
   parseSettingsPatch,
@@ -312,4 +313,103 @@ test("autopilot answers from startup by default, and the env can turn it off", (
       ),
     /autopilot\.autoStart must be true or false/,
   );
+});
+
+// ---------------------------------------------------------------- per-device agents
+
+function deviceAgentPatch() {
+  return parseSettingsPatch({
+    voipAgents: {
+      "DEV-SERIAL-1": {
+        agentId: "",
+        name: "Front desk EN",
+        voice: "charles",
+        greeting: "Hello, how can I help?",
+        systemPrompt: "You are the front desk.",
+        keyterms: ["NeuraCall", "warranty"],
+        transcriptionMode: "max_accuracy",
+        voiceFocus: "far-field",
+        voiceFocusThreshold: 0.75,
+        turnDetection: {
+          vadThreshold: 0.5,
+          minSilenceMs: 350,
+          maxSilenceMs: 1200,
+          interruptResponse: true,
+          interruptionDelayMs: 250,
+        },
+        volume: 85,
+      },
+    },
+  });
+}
+
+test("a device agent upsert is validated and stored whole", () => {
+  const patch = deviceAgentPatch();
+  const next = applyPatch(defaultSettings(), patch);
+  const saved = next.voipAgents["DEV-SERIAL-1"];
+  assert.ok(saved, "the device's agent is stored under the serial");
+  assert.equal(saved.name, "Front desk EN");
+  assert.equal(saved.voice, "charles");
+  assert.equal(saved.transcriptionMode, "max_accuracy");
+  assert.equal(saved.voiceFocus, "far-field");
+  assert.equal(saved.voiceFocusThreshold, 0.75);
+  assert.deepEqual(saved.turnDetection, {
+    vadThreshold: 0.5,
+    minSilenceMs: 350,
+    maxSilenceMs: 1200,
+    interruptResponse: true,
+    interruptionDelayMs: 250,
+  });
+  assert.equal(saved.volume, 85);
+});
+
+test("a null entry deletes a device's agent and leaves the rest", () => {
+  const withAgent = applyPatch(defaultSettings(), deviceAgentPatch());
+  const next = applyPatch(withAgent, parseSettingsPatch({ voipAgents: { "DEV-SERIAL-1": null } }));
+  assert.equal("DEV-SERIAL-1" in next.voipAgents, false);
+});
+
+test("a partial device agent update keeps the untouched turn-detection knobs", () => {
+  const withAgent = applyPatch(defaultSettings(), deviceAgentPatch());
+  const next = applyPatch(withAgent, {
+    voipAgents: { "DEV-SERIAL-1": { ...withAgent.voipAgents["DEV-SERIAL-1"]!, turnDetection: { interruptResponse: false } } },
+  } as never);
+  const merged = next.voipAgents["DEV-SERIAL-1"]!;
+  assert.equal(merged.turnDetection.interruptResponse, false);
+  assert.equal(merged.turnDetection.vadThreshold, 0.5, "untouched knob survives the merge");
+  assert.equal(merged.volume, 85, "untouched scalar survives the merge");
+});
+
+test("a device agent voice must be in the catalogue, and a serial must be non-empty", () => {
+  assert.throws(
+    () => parseSettingsPatch({ voipAgents: { "D": { voice: "nope" } } }),
+    /one of/,
+  );
+  assert.throws(() => parseSettingsPatch({ voipAgents: { "": { voice: "alba" } } }), /serial/);
+});
+
+test("toRedacted hands the renderer its own copy of the device-agent map", () => {
+  const configured = defaultSettings();
+  configured.voipAgents["D1"] = {
+    agentId: "",
+    name: "n",
+    voice: "alba",
+    greeting: "",
+    systemPrompt: "",
+    keyterms: [],
+    transcriptionMode: null,
+    voiceFocus: null,
+    voiceFocusThreshold: null,
+    turnDetection: {
+      vadThreshold: null,
+      minSilenceMs: null,
+      maxSilenceMs: null,
+      interruptResponse: true,
+      interruptionDelayMs: null,
+    },
+    volume: null,
+  };
+  const redacted = toRedacted(configured);
+  redacted.voipAgents["D1"]!.name = "mutated";
+  assert.equal(configured.voipAgents["D1"]!.name, "n", "renderer mutation stays in the renderer");
 });

@@ -30,6 +30,16 @@ export interface NeuraCallSettings {
     mode: RealtimeMode;
     /** Terms biasing recognition (brand names, SKUs). Max 100. */
     keyterms: string[];
+    /** Steer transcription toward these languages (U3.5 Pro only), e.g. ["en","fr"]. */
+    languageCodes: string[];
+    /** VAD confidence threshold 0-1; null = the service default. */
+    vadThreshold: number | null;
+    /** Silence (ms) before a speculative end-of-turn check; null = the service default. */
+    minTurnSilence: number | null;
+    /** Max silence (ms) before the turn is forced to end; null = the service default. */
+    maxTurnSilence: number | null;
+    /** Emit Heartbeat every 5 s. */
+    sessionHeartbeat: boolean;
   };
   /**
    * AssemblyAI's Voice Agent API: one socket in place of the llm and tts
@@ -90,6 +100,50 @@ export interface NeuraCallSettings {
     defaultCountryCode: string;
     healthPort: number | null;
   };
+  /**
+   * One AssemblyAI voice agent per attached phone, keyed by device serial.
+   * An entry for a device wins over the global `voiceAgent` section on that
+   * device's calls; a missing entry falls back to the global configuration.
+   */
+  voipAgents: Record<string, DeviceAgentConfig>;
+}
+
+export type VoiceAgentTranscriptionMode = "min_latency" | "balanced" | "max_accuracy";
+export type VoiceAgentFocus = "near-field" | "far-field";
+
+/** Per-device turn-detection knobs; `null` leaves the service default. */
+export interface DeviceAgentTurnDetection {
+  vadThreshold: number | null;
+  minSilenceMs: number | null;
+  maxSilenceMs: number | null;
+  interruptResponse: boolean;
+  interruptionDelayMs: number | null;
+}
+
+/**
+ * A stored per-phone voice agent. `agentId` — the uuid from POST /v1/agents —
+ * wins whenever it is non-empty; "" means the other fields configure the
+ * session inline instead.
+ */
+export interface DeviceAgentConfig {
+  agentId: string;
+  /** Human label; becomes the stored agent's `name`. */
+  name: string;
+  /** A voice_id from VOICE_IDS. The catalogue has no Arabic voice. */
+  voice: string;
+  /** The agent's opening line; "" lets it answer rather than open. */
+  greeting: string;
+  /** The agent's persona and instructions; "" keeps the service default. */
+  systemPrompt: string;
+  /** Domain terms biasing recognition (names, products, street names). */
+  keyterms: string[];
+  transcriptionMode: VoiceAgentTranscriptionMode | null;
+  voiceFocus: VoiceAgentFocus | null;
+  /** Voice-focus aggressiveness 0-1; requires `voiceFocus`. */
+  voiceFocusThreshold: number | null;
+  turnDetection: DeviceAgentTurnDetection;
+  /** 0-100. */
+  volume: number | null;
 }
 
 export type TtsProvider = "auto" | "openai" | "elevenlabs" | "command" | "silent";
@@ -103,6 +157,7 @@ export type TtsProvider = "auto" | "openai" | "elevenlabs" | "command" | "silent
 export interface RedactedSettings {
   assemblyai: NeuraCallSettings["assemblyai"];
   voiceAgent: NeuraCallSettings["voiceAgent"];
+  voipAgents: Record<string, DeviceAgentConfig>;
   llm: NeuraCallSettings["llm"] & { hasApiKey: boolean };
   tts: NeuraCallSettings["tts"] & { hasApiKey: boolean };
   audio: NeuraCallSettings["audio"];
@@ -125,6 +180,8 @@ export type DeepPartial<T> = {
 export interface SettingsPatch {
   assemblyai?: Partial<NeuraCallSettings["assemblyai"]>;
   voiceAgent?: Partial<NeuraCallSettings["voiceAgent"]>;
+  /** Per-device upserts; a `null` value deletes that device's agent. */
+  voipAgents?: Record<string, DeviceAgentConfig | null>;
   llm?: Partial<Omit<NeuraCallSettings["llm"], "apiKey">> & { apiKey?: string | null };
   tts?: Partial<Omit<NeuraCallSettings["tts"], "apiKey">> & { apiKey?: string | null };
   audio?: Partial<NeuraCallSettings["audio"]>;
@@ -158,6 +215,10 @@ const PROBE_TIMEOUT_MS = 8000;
 const MAX_KEYTERMS = 100;
 /** Per the Universal-Streaming spec; a longer term is rejected by the socket. */
 const MAX_KEYTERM_CHARS = 50;
+/** How many of the service's supported languages one session may be steered to. */
+const MAX_LANGUAGE_CODES = 20;
+/** Longest form a language code takes in practice ("zh-Hant", "en-US"). */
+const MAX_LANGUAGE_CODE_CHARS = 10;
 
 /**
  * Spellings a boolean may arrive as, matching the ones `@neuracall/config`
@@ -171,6 +232,13 @@ const FALSE_SPELLINGS = ["0", "false", "no", "off"];
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const MODES: readonly RealtimeMode[] = ["min_latency", "balanced", "max_accuracy"];
+
+const VOIP_AGENT_TRANSCRIPTION_MODES: readonly VoiceAgentTranscriptionMode[] = [
+  "min_latency",
+  "balanced",
+  "max_accuracy",
+];
+const VOIP_AGENT_FOCUS_MODES: readonly VoiceAgentFocus[] = ["near-field", "far-field"];
 const TTS_PROVIDERS: readonly TtsProvider[] = ["auto", "openai", "elevenlabs", "command", "silent"];
 
 /**
@@ -200,6 +268,11 @@ export function defaultSettings(): NeuraCallSettings {
       speechModel: DEFAULT_SPEECH_MODEL,
       mode: "balanced",
       keyterms: [],
+      languageCodes: [],
+      vadThreshold: null,
+      minTurnSilence: null,
+      maxTurnSilence: null,
+      sessionHeartbeat: false,
     },
     voiceAgent: {
       enabled: false,
@@ -208,6 +281,7 @@ export function defaultSettings(): NeuraCallSettings {
       greeting: "",
       systemPrompt: "",
     },
+    voipAgents: {},
     llm: { apiKey: "", model: "", baseUrl: DEFAULT_LLM_BASE_URL, systemPrompt: "", greeting: "" },
     tts: { provider: "auto", apiKey: "", model: "", voice: "", baseUrl: "" },
     audio: { captureSource: "mic", injectSink: "" },
@@ -235,8 +309,15 @@ export function defaultSettings(): NeuraCallSettings {
  */
 export function toRedacted(settings: NeuraCallSettings): RedactedSettings {
   return {
-    assemblyai: { ...settings.assemblyai, keyterms: [...settings.assemblyai.keyterms] },
+    assemblyai: {
+      ...settings.assemblyai,
+      keyterms: [...settings.assemblyai.keyterms],
+      // Same aliasing rule as keyterms: `assemblyai` crosses to the renderer as
+      // a live object, and a mutation there must not leak into the main process.
+      languageCodes: [...settings.assemblyai.languageCodes],
+    },
     voiceAgent: { ...settings.voiceAgent },
+    voipAgents: structuredClone(settings.voipAgents),
     llm: { ...settings.llm, apiKey: "", hasApiKey: settings.llm.apiKey !== "" },
     tts: { ...settings.tts, apiKey: "", hasApiKey: settings.tts.apiKey !== "" },
     audio: { ...settings.audio },
@@ -260,6 +341,7 @@ export function applyPatch(current: NeuraCallSettings, patch: SettingsPatch): Ne
   const next = structuredClone(current);
   if (patch.assemblyai) Object.assign(next.assemblyai, patch.assemblyai);
   if (patch.voiceAgent) Object.assign(next.voiceAgent, patch.voiceAgent);
+  if (patch.voipAgents) applyVoipAgents(next.voipAgents, patch.voipAgents);
   if (patch.audio) Object.assign(next.audio, patch.audio);
   if (patch.autopilot) Object.assign(next.autopilot, patch.autopilot);
 
@@ -283,6 +365,34 @@ function mergeSecret(stored: string, incoming: string | null | undefined): strin
 }
 
 /**
+ * Fold a device-agent upsert map into the settings record. `null` deletes the
+ * device's agent; anything else is deep-merged over the existing entry so a
+ * partial update keeps the untouched nested fields (turn-detection knobs,
+ * keyterms) rather than resetting them.
+ */
+function applyVoipAgents(
+  target: Record<string, DeviceAgentConfig>,
+  patch: Record<string, DeviceAgentConfig | null>,
+): void {
+  for (const [serial, config] of Object.entries(patch)) {
+    if (config === null) {
+      delete target[serial];
+      continue;
+    }
+    const current = target[serial];
+    target[serial] =
+      current === undefined
+        ? structuredClone(config)
+        : {
+            ...current,
+            ...config,
+            keyterms: config.keyterms,
+            turnDetection: { ...current.turnDetection, ...config.turnDetection },
+          };
+  }
+}
+
+/**
  * Fold a *trusted* layer — the settings file, the environment — into the one
  * beneath it. Plain last-write-wins, deliberately unlike `applyPatch`: these
  * layers are complete stored values, not form submissions, so an empty apiKey
@@ -293,6 +403,7 @@ function mergeLayer(base: NeuraCallSettings, layer: SettingsPatch): NeuraCallSet
   const next = structuredClone(base);
   if (layer.assemblyai) Object.assign(next.assemblyai, layer.assemblyai);
   if (layer.voiceAgent) Object.assign(next.voiceAgent, layer.voiceAgent);
+  if (layer.voipAgents) applyVoipAgents(next.voipAgents, layer.voipAgents);
   if (layer.audio) Object.assign(next.audio, layer.audio);
   if (layer.autopilot) Object.assign(next.autopilot, layer.autopilot);
 
@@ -330,6 +441,31 @@ export function parseSettingsPatch(raw: unknown): SettingsPatch {
     }
     if ("mode" in aai) section.mode = oneOf(aai["mode"], MODES, "assemblyai.mode");
     if ("keyterms" in aai) section.keyterms = keyterms(aai["keyterms"]);
+    if ("languageCodes" in aai) section.languageCodes = languageCodes(aai["languageCodes"]);
+    if ("vadThreshold" in aai) {
+      const value = aai["vadThreshold"];
+      section.vadThreshold =
+        value === null || value === ""
+          ? null
+          : numberInRange(value, "assemblyai.vadThreshold", 0, 1);
+    }
+    if ("minTurnSilence" in aai) {
+      const value = aai["minTurnSilence"];
+      section.minTurnSilence =
+        value === null || value === ""
+          ? null
+          : integer(value, "assemblyai.minTurnSilence", 50, 10000);
+    }
+    if ("maxTurnSilence" in aai) {
+      const value = aai["maxTurnSilence"];
+      section.maxTurnSilence =
+        value === null || value === ""
+          ? null
+          : integer(value, "assemblyai.maxTurnSilence", 50, 10000);
+    }
+    if ("sessionHeartbeat" in aai) {
+      section.sessionHeartbeat = boolean(aai["sessionHeartbeat"], "assemblyai.sessionHeartbeat");
+    }
     patch.assemblyai = section;
   }
 
@@ -352,6 +488,22 @@ export function parseSettingsPatch(raw: unknown): SettingsPatch {
       section.systemPrompt = text(voiceAgent["systemPrompt"], "voiceAgent.systemPrompt");
     }
     patch.voiceAgent = section;
+  }
+
+  const voipAgents = optionalObject(root, "voipAgents");
+  if (voipAgents) {
+    const map: NonNullable<SettingsPatch["voipAgents"]> = {};
+    for (const [serial, raw] of Object.entries(voipAgents)) {
+      if (serial.trim() === "") {
+        throw new Error("voipAgents keys must be non-empty device serials.");
+      }
+      if (raw === null) {
+        map[serial] = null;
+        continue;
+      }
+      map[serial] = deviceAgentConfig(raw, `voipAgents["${serial}"]`);
+    }
+    if (Object.keys(map).length > 0) patch.voipAgents = map;
   }
 
   const llm = optionalObject(root, "llm");
@@ -560,6 +712,13 @@ export function settingsFromEnv(env: NodeJS.ProcessEnv): Record<string, unknown>
       speechModel: clean(env["ASSEMBLYAI_SPEECH_MODEL"]),
       mode: clean(env["ASSEMBLYAI_MODE"])?.toLowerCase(),
       keyterms: splitList(env["ASSEMBLYAI_KEYTERMS"]),
+      languageCodes: splitList(env["ASSEMBLYAI_LANGUAGE_CODES"]),
+      vadThreshold: envThreshold(env["ASSEMBLYAI_VAD_THRESHOLD"]),
+      minTurnSilence: envSilenceMs(env["ASSEMBLYAI_MIN_TURN_SILENCE"]),
+      maxTurnSilence: envSilenceMs(env["ASSEMBLYAI_MAX_TURN_SILENCE"]),
+      // Left as a raw string for `boolean()` to judge, like autoStart and
+      // enabled — a misspelling is a loud startup problem, not a silent "off".
+      sessionHeartbeat: clean(env["ASSEMBLYAI_SESSION_HEARTBEAT"]),
     }),
     voiceAgent: compact({
       // VOICE_AGENT_ENABLED stays the string it was written as; `boolean()`
@@ -596,7 +755,7 @@ export function settingsFromEnv(env: NodeJS.ProcessEnv): Record<string, unknown>
       maxCallMs: numeric(env["NEURACALL_MAX_CALL_MS"]),
       stallMs: numeric(env["NEURACALL_STALL_MS"]),
       defaultCountryCode: clean(env["NEURACALL_COUNTRY_CODE"]),
-      healthPort: numeric(env["NEURACALL_HEALTH_PORT"]),
+      healthPort: envPort(env["NEURACALL_HEALTH_PORT"]),
     }),
   });
 }
@@ -628,12 +787,22 @@ export function settingsFromEnv(env: NodeJS.ProcessEnv): Record<string, unknown>
  */
 export function buildAppConfig(assemblyAiKey: string, settings: NeuraCallSettings): AppConfig {
   const { agentId, greeting, systemPrompt } = settings.voiceAgent;
+  const aai = settings.assemblyai;
   return {
     assemblyai: {
       apiKey: assemblyAiKey,
-      region: settings.assemblyai.region,
-      speechModel: settings.assemblyai.speechModel,
-      ...endpointsForRegion(settings.assemblyai.region),
+      region: aai.region,
+      speechModel: aai.speechModel,
+      // Absent rather than null/[] for the same reason agentId is spread in only
+      // when non-empty: AppConfig's optionals mean "don't send this on the
+      // socket", and null/"" are not "absent".
+      ...(aai.languageCodes.length > 0 ? { languageCodes: aai.languageCodes } : {}),
+      ...(aai.vadThreshold !== null ? { vadThreshold: aai.vadThreshold } : {}),
+      ...(aai.minTurnSilence !== null ? { minTurnSilence: aai.minTurnSilence } : {}),
+      ...(aai.maxTurnSilence !== null ? { maxTurnSilence: aai.maxTurnSilence } : {}),
+      // Off and unset both mean "do not ask for Heartbeats", so only on is carried.
+      ...(aai.sessionHeartbeat ? { sessionHeartbeat: true } : {}),
+      ...endpointsForRegion(aai.region),
     },
     voiceAgent: {
       enabled: settings.voiceAgent.enabled,
@@ -940,6 +1109,19 @@ function integer(value: unknown, path: string, min: number, max: number): number
   return parsed;
 }
 
+/**
+ * Like `integer`, but for the VAD threshold, which is meaningful as a fraction
+ * (0.6 is a legitimately stricter gate than 0.65). A whole-number-only rule
+ * would have rejected the values operators most want to set.
+ */
+function numberInRange(value: unknown, path: string, min: number, max: number): number {
+  const parsed = typeof value === "string" ? Number(value) : value;
+  if (typeof parsed !== "number" || Number.isNaN(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${path} must be a number between ${min} and ${max}.`);
+  }
+  return parsed;
+}
+
 function countryCode(value: unknown): string {
   const trimmed = text(value, "autopilot.defaultCountryCode");
   if (trimmed === "") return trimmed;
@@ -967,29 +1149,126 @@ function agentId(value: unknown): string {
   return trimmed;
 }
 
-function keyterms(value: unknown): string[] {
-  if (!Array.isArray(value)) throw new Error("assemblyai.keyterms must be an array of strings.");
+function keyterms(value: unknown, path: string = "assemblyai.keyterms"): string[] {
+  if (!Array.isArray(value)) throw new Error(`${path} must be an array of strings.`);
   const terms: string[] = [];
   for (const entry of value) {
     if (typeof entry !== "string") {
-      throw new Error("assemblyai.keyterms must contain strings only.");
+      throw new Error(`${path} must contain strings only.`);
     }
     const term = entry.trim();
     if (term === "") continue;
     if (term.length > MAX_KEYTERM_CHARS) {
       throw new Error(
-        `assemblyai.keyterms entries are limited to ${MAX_KEYTERM_CHARS} characters ` +
+        `${path} entries are limited to ${MAX_KEYTERM_CHARS} characters ` +
           `("${term.slice(0, 20)}…" is ${term.length}).`,
       );
     }
     terms.push(term);
   }
   if (terms.length > MAX_KEYTERMS) {
-    throw new Error(
-      `assemblyai.keyterms accepts at most ${MAX_KEYTERMS} terms (got ${terms.length}).`,
-    );
+    throw new Error(`${path} accepts at most ${MAX_KEYTERMS} terms (got ${terms.length}).`);
   }
   return terms;
+}
+
+/**
+ * Validate one per-device voice agent entry. `null` fields mean "leave the
+ * service default"; missing fields are tolerated for a partial save so the UI
+ * does not have to round-trip the whole record every time.
+ */
+function deviceAgentConfig(value: unknown, path: string): DeviceAgentConfig {
+  const raw = asObject(value, path);
+  const turn = optionalObject(raw, "turnDetection");
+  const nullOr = <T,>(field: unknown, reject: (v: unknown, p: string) => T, p: string): T | null =>
+    field === null || field === undefined || field === "" ? null : reject(field, p);
+  return {
+    agentId: "agentId" in raw ? agentId(raw["agentId"]) : "",
+    name: "name" in raw ? text(raw["name"], `${path}.name`) : "",
+    voice:
+      "voice" in raw
+        ? oneOf(raw["voice"], VOICE_IDS, `${path}.voice`)
+        : DEFAULT_VOICE_AGENT_VOICE,
+    greeting: "greeting" in raw ? text(raw["greeting"], `${path}.greeting`) : "",
+    systemPrompt:
+      "systemPrompt" in raw ? text(raw["systemPrompt"], `${path}.systemPrompt`) : "",
+    keyterms: "keyterms" in raw ? keyterms(raw["keyterms"], `${path}.keyterms`) : [],
+    transcriptionMode: nullOr(
+      raw["transcriptionMode"],
+      (v, p) => oneOf(v, VOIP_AGENT_TRANSCRIPTION_MODES, p),
+      `${path}.transcriptionMode`,
+    ),
+    voiceFocus: nullOr(
+      raw["voiceFocus"],
+      (v, p) => oneOf(v, VOIP_AGENT_FOCUS_MODES, p),
+      `${path}.voiceFocus`,
+    ),
+    voiceFocusThreshold: nullOr(
+      raw["voiceFocusThreshold"],
+      (v, p) => numberInRange(v, p, 0, 1),
+      `${path}.voiceFocusThreshold`,
+    ),
+    turnDetection: {
+      vadThreshold: nullOr(
+        turn?.["vadThreshold"],
+        (v, p) => numberInRange(v, p, 0, 1),
+        `${path}.turnDetection.vadThreshold`,
+      ),
+      minSilenceMs: nullOr(
+        turn?.["minSilenceMs"],
+        (v, p) => integer(v, p, 50, 10000),
+        `${path}.turnDetection.minSilenceMs`,
+      ),
+      maxSilenceMs: nullOr(
+        turn?.["maxSilenceMs"],
+        (v, p) => integer(v, p, 50, 10000),
+        `${path}.turnDetection.maxSilenceMs`,
+      ),
+      interruptResponse:
+        turn && "interruptResponse" in turn
+          ? boolean(turn["interruptResponse"], `${path}.turnDetection.interruptResponse`)
+          : true,
+      interruptionDelayMs: nullOr(
+        turn?.["interruptionDelayMs"],
+        (v, p) => integer(v, p, 0, 5000),
+        `${path}.turnDetection.interruptionDelayMs`,
+      ),
+    },
+    volume: nullOr(raw["volume"], (v, p) => integer(v, p, 0, 100), `${path}.volume`),
+  };
+}
+
+/**
+ * The service's supported language codes, e.g. "en", "fr", "ar-LB". Checked
+ * here so a long or non-string entry is rejected at save time rather than
+ * surfacing as a socket reject a few seconds into a call — the same reason
+ * keyterms are checked. The codes themselves are not spell-checked against a
+ * catalogue: the service adds codes, and a code it does not know is the
+ * operator's to try.
+ */
+function languageCodes(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new Error("assemblyai.languageCodes must be an array of strings.");
+  const codes: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      throw new Error("assemblyai.languageCodes must contain strings only.");
+    }
+    const code = entry.trim();
+    if (code === "") continue;
+    if (code.length > MAX_LANGUAGE_CODE_CHARS) {
+      throw new Error(
+        `assemblyai.languageCodes entries are limited to ${MAX_LANGUAGE_CODE_CHARS} characters ` +
+          `("${code.slice(0, 20)}…" is ${code.length}).`,
+      );
+    }
+    codes.push(code);
+  }
+  if (codes.length > MAX_LANGUAGE_CODES) {
+    throw new Error(
+      `assemblyai.languageCodes accepts at most ${MAX_LANGUAGE_CODES} codes (got ${codes.length}).`,
+    );
+  }
+  return codes;
 }
 
 /** Drop undefined entries; return undefined when nothing is left. */
@@ -1028,6 +1307,46 @@ function numeric(value: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
   const parsed = Number(raw);
   return Number.isInteger(parsed) ? parsed : undefined;
+}
+
+/**
+ * A port from the environment. 0 is useless (the health server would bind an
+ * ephemeral port nobody knows) and `parseSettingsPatch` rejects it, which would
+ * make `baseline` discard the *entire* environment layer — every other variable
+ * — for one bad port value. So here out-of-range just means "say nothing"; the
+ * settings UI still rejects 0 loudly.
+ */
+function envPort(value: string | undefined): number | undefined {
+  const n = numeric(value);
+  return n !== undefined && n >= 1 && n <= 65535 ? n : undefined;
+}
+
+/** Any parseable number from the environment, or "say nothing". */
+function envNumber(value: string | undefined): number | undefined {
+  const raw = clean(value);
+  if (raw === undefined) return undefined;
+  const parsed = Number(raw);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+/**
+ * A VAD threshold (0-1) from the environment. Out-of-range or unparseable means
+ * "say nothing", for the same reason envPort does: a rejected value here would
+ * make `baseline` discard the *entire* environment layer over one typo.
+ */
+function envThreshold(value: string | undefined): number | undefined {
+  const n = envNumber(value);
+  return n !== undefined && n >= 0 && n <= 1 ? n : undefined;
+}
+
+/**
+ * A turn-silence length (50-10000 ms) from the environment. Same "say nothing"
+ * lenience as envThreshold, so a bad fine-tune never takes the region and the
+ * mode down with it.
+ */
+function envSilenceMs(value: string | undefined): number | undefined {
+  const n = envNumber(value);
+  return n !== undefined && Number.isInteger(n) && n >= 50 && n <= 10000 ? n : undefined;
 }
 
 function trimSlashes(value: string): string {

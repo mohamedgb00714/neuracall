@@ -10,6 +10,9 @@ import {
   type RealtimeParams,
   type SessionState,
   type ServerMessage,
+  type UpdateConfigurationFields,
+  type ErrorMessage,
+  type HeartbeatMessage,
   type TurnEvent,
   type SpeechStartedEvent,
   type SpeakerRevisionEvent,
@@ -25,7 +28,6 @@ function buildWebSocketUrl(host: string, params: RealtimeParams): string {
   if (params.encoding) query["encoding"] = params.encoding;
   if (params.redact_pii === true) query["redact_pii"] = "true";
   if (params.filter_profanity === true) query["filter_profanity"] = "true";
-  if (params.language_code) query["language_code"] = params.language_code;
   if (params.language_detection === true) query["language_detection"] = "true";
   if (params.prompt) query["prompt"] = params.prompt;
   if (params.keyterms_prompt && params.keyterms_prompt.length > 0)
@@ -38,6 +40,29 @@ function buildWebSocketUrl(host: string, params: RealtimeParams): string {
     query["voice_focus_threshold"] = String(params.voice_focus_threshold);
   if (params.inactivity_timeout !== undefined)
     query["inactivity_timeout"] = String(params.inactivity_timeout);
+  // Maps the deprecated singular language_code onto the plural, documented form.
+  const codes = params.language_codes ?? (params.language_code ? [params.language_code] : undefined);
+  if (codes && codes.length > 0) query["language_codes"] = codes.join(",");
+  if (params.domain) query["domain"] = params.domain;
+  if (params.session_heartbeat === true) query["session_heartbeat"] = "true";
+  if (params.min_turn_silence !== undefined)
+    query["min_turn_silence"] = String(params.min_turn_silence);
+  if (params.max_turn_silence !== undefined)
+    query["max_turn_silence"] = String(params.max_turn_silence);
+  if (params.end_of_turn_confidence_threshold !== undefined)
+    query["end_of_turn_confidence_threshold"] = String(params.end_of_turn_confidence_threshold);
+  if (params.vad_threshold !== undefined) query["vad_threshold"] = String(params.vad_threshold);
+  if (params.interruption_delay !== undefined)
+    query["interruption_delay"] = String(params.interruption_delay);
+  if (params.continuous_partials === true) query["continuous_partials"] = "true";
+  if (params.include_partial_turns === true) query["include_partial_turns"] = "true";
+  if (params.format_turns === true) query["format_turns"] = "true";
+  if (params.previous_context_n_turns !== undefined)
+    query["previous_context_n_turns"] = String(params.previous_context_n_turns);
+  if (params.redact_pii_policies && params.redact_pii_policies.length > 0)
+    query["redact_pii_policies"] = params.redact_pii_policies.join(",");
+  if (params.redact_pii_sub) query["redact_pii_sub"] = params.redact_pii_sub;
+  if (params.llm_gateway) query["llm_gateway"] = params.llm_gateway;
 
   const qs = new URLSearchParams(query).toString();
   return `wss://${host}/v3/ws?${qs}`;
@@ -67,6 +92,14 @@ const realWsFactory: WebSocketFactory = (url, opts) => new WebSocket(url, opts);
  * Termination is explicit: call close({terminate: true}) to send `Terminate`
  * and await `Termination`, otherwise the session stays billable until the
  * 3-hour cap.
+ *
+ * Error semantics: an irrecoverable stream failure is emitted on `error`
+ * (a server Error frame, an unauthorized/expired/cancelled close, a rejected
+ * connect). `error` is a special Node event name — emitting it with no
+ * listener throws — so consumers MUST attach an `error` listener. Recoverable
+ * protocol noise (a non-JSON frame, an unknown server message type, a 3007
+ * chunk-size correction) is instead emitted on `notice`, which never throws
+ * and always preserves the diagnostic data.
  */
 export class RealtimeStream extends EventEmitter {
   private ws: WsLike | null = null;
@@ -76,7 +109,8 @@ export class RealtimeStream extends EventEmitter {
   private readonly wsFactory: WebSocketFactory;
   private _state: SessionState = "closed";
   private begin: BeginMessage | null = null;
-  private closeTimer: NodeJS.Timeout | null = null;
+  /** Settles an in-flight connect() when the socket is closed mid-handshake. */
+  private connectReject: ((err: Error) => void) | null = null;
   /** Recommended PCM bytes per send; corrected downward on 3007 (bad chunk size). */
   private chunkBytes: number;
 
@@ -140,6 +174,7 @@ export class RealtimeStream extends EventEmitter {
       const cleanup = () => {
         ws.off("open", onOpen);
         ws.off("error", onError);
+        this.connectReject = null;
       };
       const onOpen = () => {
         this._state = "open";
@@ -149,7 +184,13 @@ export class RealtimeStream extends EventEmitter {
       };
       const onError = (err: Error) => {
         this._state = "error";
-        this.emit("error", err);
+        if (this.listenerCount("error") > 0) this.emit("error", err);
+        cleanup();
+        reject(err);
+      };
+      // Lets close()/destroy() reject a connect() that is still awaiting a
+      // socket open, so the promise never hangs forever on a cancelled connect.
+      this.connectReject = (err: Error) => {
         cleanup();
         reject(err);
       };
@@ -177,17 +218,18 @@ export class RealtimeStream extends EventEmitter {
   }
 
   /** Push an updated prompt / agent_context / keyterms mid-session. */
-  updateConfiguration(update: {
-    prompt?: string;
-    keyterms_prompt?: string[];
-    agent_context?: string;
-    min_turn_silence?: number;
-    max_turn_silence?: number;
-    continuous_partials?: boolean;
-    vad_threshold?: number;
-    interruption_delay?: number;
-  }): void {
+  updateConfiguration(update: Partial<UpdateConfigurationFields>): void {
     this.sendControl({ type: "UpdateConfiguration", ...update });
+  }
+
+  /** Ask the server to finalize the current turn immediately (own-VAD / push-to-talk). */
+  forceEndpoint(): void {
+    this.sendControl({ type: "ForceEndpoint" });
+  }
+
+  /** Reset the server's `inactivity_timeout` timer during long silences. */
+  keepAlive(): void {
+    this.sendControl({ type: "KeepAlive" });
   }
 
   /**
@@ -236,6 +278,11 @@ export class RealtimeStream extends EventEmitter {
     }
 
     if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+      // If the handshake is still in flight, no open/error will follow the
+      // close — settle the pending connect() now so it cannot hang forever.
+      if (this.ws.readyState === WebSocket.CONNECTING) {
+        this.connectReject?.(new Error("Connection closed before it opened."));
+      }
       this.ws.close();
     }
     this._state = "closed";
@@ -266,7 +313,7 @@ export class RealtimeStream extends EventEmitter {
 
   /** Force-close without waiting (only for error paths). */
   destroy(): void {
-    if (this.closeTimer) clearTimeout(this.closeTimer);
+    this.connectReject?.(new Error("Session destroyed before it opened."));
     this._state = "closed";
     try {
       this.ws?.terminate();
@@ -276,12 +323,36 @@ export class RealtimeStream extends EventEmitter {
     this.ws = null;
   }
 
+  /**
+   * Emit an `error` event for an irrecoverable stream failure.
+   *
+   * `error` is Node-special: emitting it with no listener throws. That is the
+   * intended contract here — a broken stream is a fatal condition the caller
+   * should handle, so an unhandled one must fail loudly rather than vanish.
+   * Recoverable protocol noise (non-JSON frames, unknown message types, chunk
+   * corrections) never goes through this helper: it is emitted as `notice`, a
+   * non-special event name that cannot throw, so a consumer that only listens
+   * for `open`/`final`/etc. is never crashed by recoverable conditions.
+   */
+  private emitError(err: Error): void {
+    this.emit("error", err);
+  }
+
+  /**
+   * Emit a recoverable-protocol diagnostic on the non-crashing `notice` event.
+   * `notice` is not the special `error` name, so EventEmitter never throws
+   * regardless of what the consumer subscribed to; the data is always kept.
+   */
+  private emitNotice(err: Error): void {
+    this.emit("notice", err);
+  }
+
   private handleMessage(raw: string | Buffer | Uint8Array | ArrayBuffer): void {
     let msg: ServerMessage;
     try {
       msg = JSON.parse(raw.toString()) as ServerMessage;
     } catch {
-      this.emit("error", new Error("Received non-JSON message from server."));
+      this.emitNotice(new Error("Received non-JSON message from server."));
       return;
     }
 
@@ -306,15 +377,23 @@ export class RealtimeStream extends EventEmitter {
           turnOrders: msg.revisions.map((r) => r.turn_order),
         } satisfies SpeakerRevisionEvent);
         break;
+      case "Heartbeat":
+        this.emit("heartbeat", msg satisfies HeartbeatMessage);
+        break;
       case "LLMGatewayResponse":
         this.emit("llmGatewayResponse", msg);
+        break;
+      case "Error":
+        // The server sends this text frame immediately before closing with the
+        // same error_code; surface the real reason instead of a generic
+        // 'Unknown server message type'.
+        this.emitError(serverErrorMessage(msg));
         break;
       case "Termination":
         this.emit("termination", msg);
         break;
       default:
-        this.emit(
-          "error",
+        this.emitNotice(
           new Error(`Unknown server message type: ${(msg as { type: string }).type}`),
         );
     }
@@ -325,7 +404,7 @@ export class RealtimeStream extends EventEmitter {
     const reasonText = reason.toString();
 
     if (code === RealtimeCloseCode.TooManySessions) {
-      this.emit("error", new Error("Too many concurrent realtime sessions (3009)."));
+      this.emitError(new Error("Too many concurrent realtime sessions (3009)."));
     } else if (code === RealtimeCloseCode.BadAudioChunk) {
       // 3007 = chunk outside 50–1000 ms (or faster than real time). Shrink the
       // recommended chunk size toward the 50 ms floor so the caller re-feeds at
@@ -337,20 +416,19 @@ export class RealtimeStream extends EventEmitter {
         `Server rejected audio chunk (3007); reducing chunk size to ${corrected} bytes.`,
       );
       this.chunkBytes = corrected;
-      this.emit(
-        "error",
+      this.emitNotice(
         new Error(
           `Audio chunk outside 50-1000ms or faster than real-time (3007); chunk size corrected to ${corrected} bytes.`,
         ),
       );
     } else if (code === RealtimeCloseCode.Unauthorized) {
-      this.emit("error", new Error("Unauthorized realtime session (1008)."));
+      this.emitError(new Error("Unauthorized realtime session (1008)."));
     } else if (code === RealtimeCloseCode.SessionExpired) {
-      this.emit("error", new Error("Realtime session expired after 3-hour cap (3008)."));
+      this.emitError(new Error("Realtime session expired after 3-hour cap (3008)."));
     } else if (code === RealtimeCloseCode.SessionCancelled) {
-      this.emit("error", new Error("Session cancelled on the server (3005)."));
+      this.emitError(new Error("Session cancelled on the server (3005)."));
     } else if (code === RealtimeCloseCode.InvalidMessage) {
-      this.emit("error", new Error("Invalid message / inactivity timeout (3006)."));
+      this.emitError(new Error("Invalid message / inactivity timeout (3006)."));
     }
 
     this.emit("close", { code, reason: reasonText });
@@ -374,3 +452,10 @@ function normalizeTurn(msg: TurnMessage): TurnEvent {
 
 export { buildWebSocketUrl, normalizeTurn };
 export type { TerminationMessage };
+
+/** Build the Error event's message from the server's `Error` text frame. */
+function serverErrorMessage(msg: ErrorMessage): Error {
+  const err = new Error(`Realtime server error ${msg.error_code}: ${msg.error}`);
+  (err as { errorCode?: number }).errorCode = msg.error_code;
+  return err;
+}

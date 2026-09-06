@@ -120,6 +120,8 @@ export interface LlmGatewayDeps {
 
 /** Fallback wait when a 429 arrives without a Retry-After header. */
 const DEFAULT_RATE_LIMIT_WAIT_MS = 2000;
+/** Hard bound on one chat call; better to fail than hold the app open forever. */
+const DEFAULT_CHAT_TIMEOUT_MS = 30_000;
 
 const defaultSleep: SleepFn = async (ms, signal) => {
   await delay(ms, undefined, signal === undefined ? undefined : { signal });
@@ -157,6 +159,12 @@ export class LlmGatewayClient {
 
     for (let attempt = 0; ; attempt += 1) {
       throwIfAborted(opts.signal);
+      // Bound the whole call so an uncredited reply cannot hold the process
+      // open forever (app quit hang) or pin a socket on a dead peer. A caller
+      // signal still wins sooner when it exists.
+      const signal = opts.signal
+        ? AbortSignal.any([opts.signal, AbortSignal.timeout(DEFAULT_CHAT_TIMEOUT_MS)])
+        : AbortSignal.timeout(DEFAULT_CHAT_TIMEOUT_MS);
       const res = await this.fetchFn(url, {
         method: "POST",
         headers: {
@@ -164,13 +172,13 @@ export class LlmGatewayClient {
           "content-type": "application/json",
         },
         body: JSON.stringify(body),
-        signal: opts.signal,
+        signal,
       });
 
       if (res.status === 429 && attempt < this.maxRateLimitRetries) {
         // The server's own Retry-After beats any schedule we could invent.
         const waitMs = parseRetryAfter(res.headers.get("retry-after"), this.now());
-        await this.sleep(waitMs ?? DEFAULT_RATE_LIMIT_WAIT_MS, opts.signal);
+        await this.sleep(waitMs ?? DEFAULT_RATE_LIMIT_WAIT_MS, signal);
         continue;
       }
       if (!res.ok) throw new LlmGatewayError(res.status, url, await safeText(res));

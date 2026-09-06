@@ -202,7 +202,19 @@ test("audio before session.ready throws and names the state it needs", async () 
   assert.throws(() => session.sendAudio(new Uint8Array(480)), /before session\.ready/i);
   assert.equal(socket.ofType("input.audio").length, 0, "nothing may be sent before ready");
 
-  await assert.rejects(connecting, /Timed out .* waiting for session\.ready/);
+  // connect() only rejects when the (unref'd) readyTimeout fires. Awaiting it
+  // bare would drain the event loop and node:test would cancel this as
+  // "event loop has already resolved"; awaitUnrefTimer keeps the loop alive
+  // until the rejection, instead of relying on timer ordering.
+  const rejection = await awaitUnrefTimer(
+    connecting.then(
+      () => null,
+      (err: Error) => err,
+    ),
+    "connect()",
+  );
+  assert.ok(rejection, "connect() must reject with the ready timeout, not resolve");
+  assert.match(rejection.message, /Timed out .* waiting for session\.ready/);
 });
 
 test("audio after the session ended returns false instead of throwing", async () => {
@@ -439,6 +451,32 @@ function withinTick<T>(promise: Promise<T>, label: string): Promise<T> {
       timer.unref?.();
     }),
   ]);
+}
+
+/**
+ * Await a promise that only an UNREF'D internal timer (e.g. the session.ready
+ * timeout) can settle. node:test flags such a test as cancelled — "Promise
+ * resolution is still pending but the event loop has already resolved" — once
+ * the loop drains with no ref'd work left: an unref'd timer does not keep the
+ * loop alive, so the pending await looks permanently stuck. A ref'd keeper runs
+ * until the promise settles and is cleared the moment it does.
+ */
+async function awaitUnrefTimer<T>(promise: Promise<T>, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const keeper = setTimeout(() => {
+      reject(new Error(`${label} never settled within the keep-alive window`));
+    }, 10_000);
+    promise.then(
+      (value) => {
+        clearTimeout(keeper);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(keeper);
+        reject(err);
+      },
+    );
+  });
 }
 
 test("close() during the handshake settles connect() and sends no session.end", async () => {

@@ -27,6 +27,7 @@ import { delimiter, join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { floatToPcm16, normalize, parseWavHeader } from "@neuracall/audio-pipeline";
 import type { AppConfig } from "@neuracall/config";
+import { DEFAULT_LLM_BASE_URL } from "./llm.js";
 import { SilentTts, type SynthesizedSpeech, type TtsClient, type TtsRequest } from "./tts.js";
 
 /** Rate the agent asks for when nothing else says otherwise (LocalOutStream's default). */
@@ -500,15 +501,18 @@ export interface TtsSelectionOptions {
  *
  * Order: an explicit `TTS_PROVIDER`, else a hosted provider if `TTS_API_KEY`
  * is set (ElevenLabs when the model id looks like one of theirs, otherwise the
- * OpenAI-compatible path), else a local engine, else silence.
+ * OpenAI-compatible path), else the OpenAI-compatible endpoint the agent's LLM
+ * already talks to (`LLM_API_KEY` / `LLM_MODEL` / `LLM_BASE_URL`) so a reply is
+ * audible without any TTS-specific setup, else a local engine, else silence.
  *
  * It never throws. A call must be answerable even when TTS is unconfigured or
  * broken: `SilentTts` still transcribes the caller, still runs the agent and
  * still logs the reply — the far end simply hears nothing, which beats not
- * picking up.
+ * picking up. Only a wholly unconfigured TTS section borrows the LLM endpoint;
+ * an operator who set a `TTS_*` key or model is never silently redirected.
  */
 export function selectTtsClient(
-  config: Pick<AppConfig, "tts">,
+  config: Pick<AppConfig, "tts"> & Partial<Pick<AppConfig, "llm">>,
   opts: TtsSelectionOptions = {},
 ): TtsSelection {
   const env = opts.env ?? process.env;
@@ -518,6 +522,13 @@ export function selectTtsClient(
   const model = clean(config.tts.model);
   const requested = clean(env["TTS_PROVIDER"])?.toLowerCase();
 
+  // The OpenAI-compatible endpoint the agent already talks to can back the
+  // default voice. Both halves of it must be set — a key without a model (or
+  // vice versa) means an unfinished setup, not a provider.
+  const llmApiKey = clean(config.llm?.apiKey);
+  const llmModel = clean(config.llm?.model);
+  const llmBacksTts = llmApiKey !== undefined && llmModel !== undefined;
+
   const wanted: TtsSelection["provider"][] =
     requested === "openai" ||
     requested === "elevenlabs" ||
@@ -526,10 +537,21 @@ export function selectTtsClient(
       ? [requested]
       : apiKey
         ? [looksLikeElevenLabs(model) ? "elevenlabs" : "openai", "command"]
-        : ["command"];
+        : llmBacksTts
+          ? ["openai", "command"]
+          : ["command"];
 
   for (const provider of wanted) {
-    const selection = tryBuild(provider, { config, env, sampleRate, apiKey, model, opts });
+    const selection = tryBuild(provider, {
+      config,
+      env,
+      sampleRate,
+      apiKey,
+      model,
+      llmApiKey,
+      llmModel,
+      opts,
+    });
     if (selection) return selection;
   }
 
@@ -552,11 +574,13 @@ export function createTtsClient(
 }
 
 interface BuildContext {
-  config: Pick<AppConfig, "tts">;
+  config: Pick<AppConfig, "tts"> & Partial<Pick<AppConfig, "llm">>;
   env: NodeJS.ProcessEnv;
   sampleRate: number;
   apiKey: string | undefined;
   model: string | undefined;
+  llmApiKey: string | undefined;
+  llmModel: string | undefined;
   opts: TtsSelectionOptions;
 }
 
@@ -570,19 +594,36 @@ function asCommandEngine(value: string | undefined): TtsCommandEngine | undefine
 
 /** Construct one provider, or null when this machine/config cannot support it. */
 function tryBuild(provider: TtsSelection["provider"], ctx: BuildContext): TtsSelection | null {
-  const { env, sampleRate, apiKey, model, opts } = ctx;
-  const baseUrl = clean(env["TTS_BASE_URL"]);
+  const { env, sampleRate, apiKey, model, llmApiKey, llmModel, opts } = ctx;
+  const ttsBaseUrl = clean(env["TTS_BASE_URL"]);
   const voice = clean(env["TTS_VOICE"]);
   try {
     switch (provider) {
       case "openai": {
-        if (!apiKey || !model) return null;
+        // A TTS-specific key or model owns this selection exactly as before
+        // (both are required, or the provider is unusable and the next
+        // candidate — ultimately the local engine — gets its turn). Only a
+        // wholly unconfigured TTS section borrows the LLM endpoint the agent
+        // already talks to, so the default is real speech whenever an
+        // OpenAI-compatible LLM is set up.
+        const ttsOwned = apiKey !== undefined || model !== undefined;
+        const key = ttsOwned ? apiKey : llmApiKey;
+        const ttsModel = ttsOwned ? model : llmModel;
+        if (!key || !ttsModel) return null;
+        // The borrowed endpoint travels through the LLM's base URL — including
+        // its OpenRouter default — so no TTS-specific base needs configuring;
+        // an explicit TTS_BASE_URL still wins for either source.
+        const baseUrl = ttsOwned
+          ? ttsBaseUrl
+          : clean(env["LLM_BASE_URL"]) ?? ttsBaseUrl ?? DEFAULT_LLM_BASE_URL;
         return {
           provider,
-          description: `OpenAI-compatible TTS (${model}, voice ${voice ?? "alloy"}) at ${sampleRate} Hz`,
+          description: ttsOwned
+            ? `OpenAI-compatible TTS (${ttsModel}, voice ${voice ?? "alloy"}) at ${sampleRate} Hz`
+            : `OpenAI-compatible TTS from the LLM config (${ttsModel}, voice ${voice ?? "alloy"}) at ${sampleRate} Hz`,
           client: new OpenAiCompatibleTts({
-            apiKey,
-            model,
+            apiKey: key,
+            model: ttsModel,
             sampleRate,
             ...(voice ? { voice } : {}),
             ...(baseUrl ? { baseUrl } : {}),
@@ -597,7 +638,7 @@ function tryBuild(provider: TtsSelection["provider"], ctx: BuildContext): TtsSel
           sampleRate,
           ...(model ? { model } : {}),
           ...(voice ? { voiceId: voice } : {}),
-          ...(baseUrl ? { baseUrl } : {}),
+          ...(ttsBaseUrl ? { baseUrl: ttsBaseUrl } : {}),
           ...(opts.fetchFn ? { fetchFn: opts.fetchFn } : {}),
         });
         return {

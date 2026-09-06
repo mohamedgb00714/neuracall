@@ -129,6 +129,26 @@ Arabic and French input but can only answer in one of the six.
 The voice is fixed once a session is established and cannot be changed
 mid-conversation.
 
+## Per-phone agents
+
+A NeuraCall machine can attach more than one handset, and each one can have its
+own agent. The Settings UI keeps one stored agent per attached device, keyed by
+device serial under `voipAgents` in `settings.json`; saving the form creates or
+updates the agent against `https://agents.assemblyai.com/v1/agents` and stores
+the returned uuid on the entry.
+
+At call time the bridge's `sessionFor`/`voiceAgentFor` resolver binds the
+device to its own agent, falling back to the global `voiceAgent` configuration
+when the device has no entry. A device whose entry carries a stored `agentId`
+calls through that agent; one without an id is configured inline from the same
+fields.
+
+The supported fields are `name`, `voice`, `greeting`, `systemPrompt`, `keyterms`,
+`transcriptionMode`, `voiceFocus` and `voiceFocusThreshold`, the turn-detection
+knobs (VAD threshold, min/max silence, barge-in, interruption delay), and
+`volume`. Only what the operator set reaches the API: an empty optional stays
+off the wire.
+
 ## What this still does not solve
 
 The Voice Agent API closes two of the three gaps between "NeuraCall runs" and

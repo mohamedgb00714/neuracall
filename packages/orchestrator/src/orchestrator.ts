@@ -27,7 +27,11 @@ import {
   type AudioInjector,
   type CallAudioChunk,
 } from "@neuracall/audio-pipeline";
-import type { RealtimeParams, TurnEvent } from "@neuracall/aai-client";
+import type {
+  RealtimeParams,
+  TurnEvent,
+  UpdateConfigurationFields,
+} from "@neuracall/aai-client";
 import type {
   CallChannelDetector,
   CallController,
@@ -62,7 +66,8 @@ export interface DevicePool {
  */
 export interface SttStream {
   sendAudio(chunk: Uint8Array): boolean;
-  updateConfiguration(update: { agent_context?: string; keyterms_prompt?: string[] }): void;
+  /** Full realtime delta; an implementation ignores the fields it has no equivalent for. */
+  updateConfiguration(update: Partial<UpdateConfigurationFields>): void;
   on(event: "turn", listener: (turn: TurnEvent) => void): unknown;
   on(event: "error", listener: (err: Error) => void): unknown;
   on(event: "close", listener: () => void): unknown;
@@ -598,9 +603,11 @@ export class Orchestrator extends EventEmitter {
         active.stream?.updateConfiguration({
           agent_context: reply.text,
           ...(reply.keyterms ? { keyterms_prompt: reply.keyterms } : {}),
+          ...(reply.updateConfiguration ?? {}),
         });
       } catch (err) {
-        // Biasing is an accuracy optimisation; losing it must not end a call.
+        // Biasing and tuning are accuracy optimisations; losing them must not
+        // end a call.
         this.emit("error", toError(err), active.record.callId);
       }
     }
@@ -651,6 +658,30 @@ export class Orchestrator extends EventEmitter {
   endCall(callId: string, outcome: CallOutcome = "completed", reason = "ended by request"): void {
     const active = this.calls.get(callId);
     if (active) this.requestEnd(active, outcome, reason);
+  }
+
+  /**
+   * Resolve once every in-flight call has been torn down and its record
+   * persisted.
+   *
+   * A call's last `save()` is the final step of `teardown`, so a store that
+   * is closed while teardown is still running throws that write away. The
+   * app's shutdown ends each live call and awaits this before closing the
+   * CRM, so a call still ending at quit time keeps its final record.
+   *
+   * Idempotent: an empty calls map returns immediately, and a second drain
+   * just waits for the same teardowns. Nothing here can throw — every
+   * teardown step is individually guarded — but a teardown that never
+   * resolves keeps this pending: shutdown prefers waiting for the record to
+   * dropping it.
+   */
+  async drain(): Promise<void> {
+    while (this.calls.size > 0) {
+      // End anything `endCall` missed, then hand the event loop a turn so the
+      // teardown each `finished` promise unblocks can run.
+      for (const call of [...this.calls.values()]) call.finish();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
   }
 
   /** Ask the call loop to finish; teardown happens in `handleIncomingCall`. */

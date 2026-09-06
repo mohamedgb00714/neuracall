@@ -84,11 +84,19 @@ export interface VoiceAgentTurnDetection {
   max_silence?: number;
   /** Whether user speech barges in on an in-flight reply. */
   interrupt_response?: boolean;
+  /** How long after the caller speaks before the agent interrupts its reply. */
+  interruption_delay?: number;
 }
 
 export interface VoiceAgentInputConfig {
   format?: VoiceAgentAudioFormat;
   turn_detection?: VoiceAgentTurnDetection;
+  /** Speed-vs-accuracy tradeoff; the agent's pacing presets. */
+  transcription_mode?: "min_latency" | "balanced" | "max_accuracy";
+  /** `near-field` (close-talking mics) or `far-field` (speakerphone, room). */
+  voice_focus?: "near-field" | "far-field";
+  /** Voice-focus aggressiveness 0.0-1.0; requires `voice_focus`. */
+  voice_focus_threshold?: number;
   /** Recognition biasing terms (the agent-side equivalent of keyterms_prompt). */
   keyterms?: string[];
 }

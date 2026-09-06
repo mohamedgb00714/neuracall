@@ -48,6 +48,7 @@ single biggest gap between "the code can do it" and "the app does it".
 | `@neuracall/device-manager` | `adb devices` polling, USB vs Wi-Fi endpoints, device phase (`online`/`incoming`/`in-call`/`busy`/`offline`), `AndroidCallController` (answer, hang up, dial, DTMF, call state via `dumpsys telephony.registry`), `AdbCallChannelDetector` (cellular vs WhatsApp), `devices.json`. | Audio, in any form.                                                            |
 | `@neuracall/orchestrator`   | The call lifecycle. `CallStateMachine`, `Orchestrator`, `ScrcpyAudioCapture`, `CommandAudioInjector`, `MemoryCallRecordStore` / `JsonlCallRecordStore`.                                                                                                                            | The conversation. It calls a `CallAgent` interface.                            |
 | `@neuracall/agent`          | The brain: `LlmCallAgent`, `ConversationStore`, the `LlmClient` and `TtsClient` ports, `OpenAiCompatibleLlmClient`, and abort-driven barge-in.                                                                                                                                     | Audio transport. It returns PCM and text; the orchestrator plays it.           |
+| `@neuracall/whatsapp`       | The text side of the WhatsApp Cloud API: `TextMessageRouter` drives the *same* `CallAgent` and conversation as a voice call on that number; signature verification and webhook-retry dedup.                                                                                        | Binding a socket. The desktop app hosts the webhook route and owns its lifecycle. |
 | `@neuracall/e2e`            | Composing the real stack with fakes only at its outer edges (adb, the A2I socket, scrcpy, the LLM, TTS).                                                                                                                                                                           | Anything shipped. Test-only, no `dist/`.                                       |
 | `@neuracall/desktop`        | Electron main process runtime (device pool, session manager, per-device capture, call control), IPC, and the React control centre.                                                                                                                                                 | The AssemblyAI key ever reaching the renderer.                                 |
 
@@ -55,6 +56,21 @@ Everything external — HTTP, child processes, clocks, the filesystem root, the
 WebSocket factory — is injectable. That is not stylistic: it is what makes
 `npm test` and `npm run test:e2e` run in CI with no device, no API key and no
 spend.
+
+### The WhatsApp text-message bridge
+
+`@neuracall/whatsapp`'s `TextMessageRouter` drives the *same* `CallAgent` and
+the same `ConversationStore` entry a voice call on that number uses (keyed by
+`(deviceId, channel: "whatsapp")`), so a contact who texts and then rings does
+not repeat themselves; text turns are told apart by `ChatMessage.via` and the
+`whatsapp-text:` call id (`packages/whatsapp/src/router.ts`).
+
+`apps/desktop` hosts the other half — `WhatsAppTextService` in
+`electron/service/whatsappText.ts`: the HTTP route for Meta's Cloud API webhook,
+signature checked over the bytes that arrived, bound to loopback by default, and
+inert until `WHATSAPP_*` credentials are set. Text is opt-in on purpose — a
+listener nobody asked for would be an unannounced port on the operator's
+machine.
 
 ---
 
@@ -98,9 +114,11 @@ spend.
                 turn that finds itself superseded returns null instead of a
                 stale reply. State: answered → talking on the first real media.
                 │
-  TTS           TtsClient.synthesize() → PCM. Today the only implementation is
-                SilentTts, which returns the right *duration* of silence so
-                pacing is realistic and nothing is heard.
+  TTS           TtsClient.synthesize() → PCM. The default speaks the
+                OpenAI-compatible /audio/speech contract on the endpoint the
+                LLM already uses; SilentTts — the right *duration* of silence —
+                is the last resort when no LLM, TTS config or local engine is
+                configured, so pacing is realistic and nothing is heard.
                 │
   inject        LocalOutStream converts to the injector's rate and channel count
                 and writes. `agent_context` is pushed to AssemblyAI with the

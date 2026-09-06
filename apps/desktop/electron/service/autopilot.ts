@@ -6,6 +6,7 @@ import {
   LlmGatewayClient,
   PrerecordedClient,
   type RealtimeMode,
+  type RealtimeParams,
   type RealtimeSessionManager,
 } from "@neuracall/aai-client";
 import {
@@ -13,6 +14,8 @@ import {
   AndroidCallController,
   DeviceManager,
   VoipAnswerer,
+  captureScreen,
+  ocrAcceptButton,
   type CommandRunner,
 } from "@neuracall/device-manager";
 import type { ScrcpyAudioSource } from "@neuracall/scrcpy-bridge";
@@ -44,6 +47,7 @@ import {
   type HealthServer,
   type MetricsSnapshot,
   type PostCallResult,
+  type VoiceAgentClientConfig,
 } from "@neuracall/orchestrator";
 
 /** Value `.env.example` ships for every unset key; treat it as unconfigured. */
@@ -86,6 +90,13 @@ export interface AutopilotOptions {
   /** Terms biasing recognition on every turn (brand names, SKUs). */
   keyterms?: string[];
   /**
+   * The operator's STT fine-tuning (language steer, turn-silence, VAD
+   * threshold, Heartbeats), already mapped to realtime param names by the
+   * runtime so the composed path and the Voice Agent path agree. Merged into
+   * every session the orchestrator opens.
+   */
+  realtimeParams?: Partial<RealtimeParams>;
+  /**
    * Bind the operator health/metrics endpoint on this port. Omit to leave it
    * off — it is bound to loopback, but an endpoint nobody asked for is still
    * an endpoint.
@@ -106,6 +117,13 @@ export interface AutopilotOptions {
    */
   isSessionSweepable?: (key: { deviceId: string; channelId: string }) => boolean;
   /**
+   * Per-device voice agents. Called with each call's device before the bridge
+   * opens its session; return the agent the device should carry (`{agentId}`
+   * for a stored agent, `{session}` for an inline persona) or `undefined` to
+   * let the call fall back to the global `config.voiceAgent` configuration.
+   */
+  voiceAgentFor?: (key: { deviceId: string; channelId: string }) => VoiceAgentClientConfig | undefined;
+  /**
    * Country calling code for caller IDs that arrive without one, so a national
    * number still links to the contact holding its E.164 form.
    */
@@ -118,6 +136,14 @@ export interface AutopilotOptions {
   summaryModel?: string;
   /** Run post-call transcription/summary after each call. Default false. */
   postCallAnalytics?: boolean;
+  /**
+   * Test seam: construct the Orchestrator yourself instead of letting the
+   * Autopilot. It is handed the real call store (the CRM), so an injected
+   * orchestrator still persists through the very store `shutdown` closes —
+   * the ordering contract under test. Omit it and the Autopilot builds its
+   * own orchestrator from `devices` / `sessions` / `runner` as usual.
+   */
+  buildOrchestrator?: (store: CallRecordStore) => Orchestrator;
 }
 
 export interface AutopilotStatus {
@@ -194,6 +220,8 @@ export class Autopilot extends EventEmitter {
   private health: HealthServer | null = null;
   private running = false;
   private handled = 0;
+  /** Guards the idempotent shutdown: the CRM must not be closed twice. */
+  private shutDown = false;
 
   constructor(opts: AutopilotOptions) {
     super();
@@ -202,7 +230,11 @@ export class Autopilot extends EventEmitter {
     // The Voice Agent replaces STT, the LLM and TTS with one socket, so when it
     // is on none of the three needs configuring — that is the whole point of
     // it. Built first because it decides what the rest of the pipeline is.
-    this.voiceAgent = buildVoiceAgentBridge(opts.config, () => this.buildInjector());
+    this.voiceAgent = buildVoiceAgentBridge(
+      opts.config,
+      () => this.buildInjector(),
+      opts.voiceAgentFor,
+    );
 
     const llm = buildLlmClient(opts.config, opts.llmBaseUrl);
     this.llmConfigured = llm !== null;
@@ -212,7 +244,7 @@ export class Autopilot extends EventEmitter {
     // barge-in window behave as they will with real speech.
     const tts = selectTtsClient(opts.config, {
       sampleRate: 16000,
-      ...(opts.ttsEnv ? { env: opts.ttsEnv } : {}),
+      ...(opts.ttsEnv ? { env: ttsEnvWithLlmBase(opts.ttsEnv, opts.llmBaseUrl) } : {}),
     });
     this.ttsConfigured = tts.provider !== "silent";
     this.ttsDescription = tts.description;
@@ -245,44 +277,9 @@ export class Autopilot extends EventEmitter {
       : null;
     this.store = this.crm ?? new JsonlCallRecordStore(join(opts.dataDir, "calls.jsonl"));
 
-    this.orchestrator = new Orchestrator({
-      devices: opts.devices,
-      controllerFor: (deviceId) => new AndroidCallController(opts.runner, deviceId),
-      // WhatsApp and the other VoIP apps ignore the cellular KEYCODE_CALL the
-      // controller sends, so their calls have to be accepted by tapping the
-      // button in the app. Without this a WhatsApp call rings out and is
-      // recorded as missed, with nothing reporting a failure.
-      answerVoip: (deviceId, channelId) =>
-        new VoipAnswerer(opts.runner, {
-          onStep: (step) => this.emit("error", `answering ${channelId}: ${step}`, deviceId),
-        })
-          .answer(deviceId, channelId)
-          .then(() => undefined),
-      detector: new AdbCallChannelDetector(opts.runner),
-      sessions: this.voiceAgent ?? opts.sessions,
-      capture: new ScrcpyAudioCapture({
-        ...(opts.audioSource !== undefined ? { audioSource: opts.audioSource } : {}),
-        onSourceSelected: ({ deviceId, source }) =>
-          this.emit("error", `capture using --audio-source=${source}`, deviceId),
-      }),
-      agent: this.voiceAgent ? this.voiceAgent.agent : this.agent,
-      // The CRM is the call store, not a separate system: every call is
-      // written straight into it and auto-linked to a contact by number, so
-      // history is queryable per caller instead of being a flat log.
-      store: this.store,
-      recordingsDir: opts.dataDir,
-      speechModel: opts.config.assemblyai.speechModel,
-      realtimeParams: {
-        ...(opts.realtimeMode !== undefined ? { mode: opts.realtimeMode } : {}),
-        ...(opts.keyterms && opts.keyterms.length > 0 ? { keyterms_prompt: opts.keyterms } : {}),
-      },
-      // On the Voice Agent path the bridge owns the transport: it streams the
-      // reply straight there as it arrives instead of handing it back, so
-      // giving the orchestrator its own injector would open a second one that
-      // is never written to.
-      ...(this.voiceAgent ? {} : { injectorFor: () => this.buildInjector() }),
-      watchIntervalMs: opts.pollIntervalMs ?? 1500,
-    });
+this.orchestrator = opts.buildOrchestrator
+      ? opts.buildOrchestrator(this.store)
+      : this.buildOrchestrator();
 
     this.orchestrator.on("call", (record: CallRecord) => {
       this.emit("call", record);
@@ -342,6 +339,61 @@ export class Autopilot extends EventEmitter {
       ...(opts.isSessionSweepable ? { isSweepable: opts.isSessionSweepable } : {}),
       onTeardown: (t) => this.emit("error", `watchdog: ${t.reason}`, t.callId),
       onError: (err) => this.emit("error", `watchdog sweep failed: ${err.message}`),
+    });
+  }
+
+  /** The production orchestrator: every transport wired to the real stack. */
+  private buildOrchestrator(): Orchestrator {
+    return new Orchestrator({
+      devices: this.opts.devices,
+      controllerFor: (deviceId) => new AndroidCallController(this.opts.runner, deviceId),
+      // WhatsApp and the other VoIP apps ignore the cellular KEYCODE_CALL the
+      // controller sends, so their calls have to be accepted by tapping the
+      // button in the app. Without this a WhatsApp call rings out and is
+      // recorded as missed, with nothing reporting a failure.
+      answerVoip: (deviceId, channelId) =>
+        new VoipAnswerer(this.opts.runner, {
+          onStep: (step) => this.emit("error", `answering ${channelId}: ${step}`, deviceId),
+          // When the ringing overlay floats over the launcher (realme, French
+          // WhatsApp Business), the uiautomator dump never contains the accept
+          // control — the OCR fallback reaches in through the screencap
+          // instead. It only ever engages after the dump came back blind, and
+          // a missing/broken tesseract surfaces on the answerer's onStep while
+          // the dump path keeps polling.
+          ocrFallback: {
+            captureScreen: (endpoint) => captureScreen(this.opts.runner, endpoint),
+            detect: (png) => ocrAcceptButton(png).then((hit) => hit?.node ?? null),
+          },
+        })
+          .answer(deviceId, channelId)
+          .then(() => undefined),
+      detector: new AdbCallChannelDetector(this.opts.runner),
+      sessions: this.voiceAgent ?? this.opts.sessions,
+      capture: new ScrcpyAudioCapture({
+        ...(this.opts.audioSource !== undefined ? { audioSource: this.opts.audioSource } : {}),
+        onSourceSelected: ({ deviceId, source }) =>
+          this.emit("error", `capture using --audio-source=${source}`, deviceId),
+      }),
+      agent: this.voiceAgent ? this.voiceAgent.agent : this.agent,
+      // The CRM is the call store, not a separate system: every call is
+      // written straight into it and auto-linked to a contact by number, so
+      // history is queryable per caller instead of being a flat log.
+      store: this.store,
+      recordingsDir: this.opts.dataDir,
+      speechModel: this.opts.config.assemblyai.speechModel,
+      realtimeParams: {
+        ...(this.opts.realtimeMode !== undefined ? { mode: this.opts.realtimeMode } : {}),
+        ...(this.opts.keyterms && this.opts.keyterms.length > 0
+          ? { keyterms_prompt: this.opts.keyterms }
+          : {}),
+        ...this.opts.realtimeParams,
+      },
+      // On the Voice Agent path the bridge owns the transport: it streams the
+      // reply straight there as it arrives instead of handing it over, so
+      // giving the orchestrator its own injector would open a second one that
+      // is never written to.
+      ...(this.voiceAgent ? {} : { injectorFor: () => this.buildInjector() }),
+      watchIntervalMs: this.opts.pollIntervalMs ?? 1500,
     });
   }
 
@@ -405,7 +457,7 @@ export class Autopilot extends EventEmitter {
       );
     } else if (this.injection === "unavailable") {
       degraded.push(
-        "No audio player found on PATH — install pipewire-utils, pulseaudio-utils or alsa-utils.",
+        "No audio player found on PATH — install alsa-utils (aplay) or ffmpeg (ffplay).",
       );
     }
 
@@ -431,13 +483,27 @@ export class Autopilot extends EventEmitter {
     this.orchestrator.endCall(callId, "completed", "ended from the dashboard");
   }
 
-  /** Stop the watch loop and hang up anything still running. */
+  /**
+   * Stop the watch loop, hang up anything still running, and close the store.
+   *
+   * The final record of a call that is still ending is written by its
+   * teardown *after* `endCall` returns, so the CRM must not be closed until
+   * every in-flight teardown has run — otherwise the quit race drops the last
+   * record. Idempotent: a second shutdown is a no-op.
+   */
   async shutdown(): Promise<void> {
+    if (this.shutDown) return;
+    this.shutDown = true;
     this.disable();
     this.watchdog.stop();
     for (const call of this.orchestrator.activeCalls) {
       this.orchestrator.endCall(call.callId, "failed", "application shutting down");
     }
+    // A clean await rather than a timeout: every teardown step is individually
+    // guarded (see Orchestrator.teardown), so a drain cannot throw, and the
+    // final persist simply must land before the store closes — a wedged
+    // teardown keeping shutdown pending beats throwing a call record away.
+    await this.orchestrator.drain();
     await this.health?.close().catch(() => undefined);
     this.health = null;
     this.crm?.close();
@@ -492,6 +558,7 @@ export class Autopilot extends EventEmitter {
 function buildVoiceAgentBridge(
   config: AppConfig,
   injectorFor: () => AudioInjector,
+  sessionFor?: (key: { deviceId: string; channelId: string }) => VoiceAgentClientConfig | undefined,
 ): VoiceAgentBridge | null {
   const va = config.voiceAgent;
   if (!va.enabled) return null;
@@ -501,6 +568,7 @@ function buildVoiceAgentBridge(
     apiKey: config.assemblyai.apiKey,
     wsUrl: va.wsUrl,
     injectorFor,
+    ...(sessionFor ? { sessionFor } : {}),
     ...(va.agentId
       ? { agentId: va.agentId }
       : {
@@ -513,6 +581,25 @@ function buildVoiceAgentBridge(
           },
         }),
   });
+}
+
+/**
+ * The env `selectTtsClient` reads for the borrowed OpenAI-compatible endpoint,
+ * aligned with the LLM client's own base URL.
+ *
+ * The LLM talks to `AutopilotOptions.llmBaseUrl` (the settings-derived UI
+ * override) but `selectTtsClient` borrows the voice endpoint from
+ * `LLM_BASE_URL` in env — which only reflects `.env`, not the UI override.
+ * Pin the env variable to the same base the text path uses, so a custom
+ * LLM base URL voices the reply as well; otherwise a proxy'd OpenRouter
+ * install would send voice to the wrong host.
+ */
+export function ttsEnvWithLlmBase(
+  ttsEnv: NodeJS.ProcessEnv,
+  llmBaseUrl: string | undefined,
+): NodeJS.ProcessEnv {
+  if (llmBaseUrl === undefined) return ttsEnv;
+  return { ...ttsEnv, LLM_BASE_URL: llmBaseUrl };
 }
 
 function buildLlmClient(config: AppConfig, baseUrl?: string): LlmClient | null {

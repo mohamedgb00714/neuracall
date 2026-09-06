@@ -75,37 +75,39 @@ export class RealtimeSessionManager extends EventEmitter {
 
     await this.acquireSlot();
 
-    // A slot may have been taken by an earlier queued caller while we waited.
-    if (this.sessions.has(mapKey)) {
-      throw new Error(`Session already open for ${key.deviceId}/${key.channelId}.`);
-    }
-
-    const stream = new RealtimeStream(this.config, opts.params, {
-      wsFactory: this.wsFactory,
-    });
-
-    if (this.auth.mode === "temp-token") {
-      const token = await mintRealtimeToken(this.config, this.auth.ttlSeconds);
-      stream.withToken(token);
-    }
-
-    const managed: ManagedSession = {
-      key,
-      stream,
-      phase: "open",
-    };
-    this.sessions.set(mapKey, managed);
-    this.attachCallbacks(managed);
-
+    // Every failure after this point returns the slot: a dup-check throw, a
+    // mint failure or a connect abort must not permanently consume capacity.
     try {
+      // A slot may have been taken by an earlier queued caller while we waited.
+      if (this.sessions.has(mapKey)) {
+        throw new Error(`Session already open for ${key.deviceId}/${key.channelId}.`);
+      }
+
+      const stream = new RealtimeStream(this.config, opts.params, {
+        wsFactory: this.wsFactory,
+      });
+
+      if (this.auth.mode === "temp-token") {
+        const token = await mintRealtimeToken(this.config, this.auth.ttlSeconds);
+        stream.withToken(token);
+      }
+
+      const managed: ManagedSession = {
+        key,
+        stream,
+        phase: "open",
+      };
+      this.sessions.set(mapKey, managed);
+      this.attachCallbacks(managed);
+
       await stream.connect();
+
+      return stream;
     } catch (err) {
       this.sessions.delete(mapKey);
       this.releaseSlot();
       throw err;
     }
-
-    return stream;
   }
 
   /**
@@ -214,6 +216,12 @@ export class RealtimeSessionManager extends EventEmitter {
     stream.on("speakerRevision", (ev: SpeakerRevisionEvent) =>
       this.emit("speakerRevision", managed.key, ev),
     );
+    stream.on("llmGatewayResponse", (msg) => this.emit("llmGatewayResponse", managed.key, msg));
+    stream.on("heartbeat", (msg) => this.emit("heartbeat", managed.key, msg));
+    stream.on("warn", (msg: string) => this.emit("warn", managed.key, msg));
+    // Recoverable protocol diagnostics (non-JSON frames, unknown types, chunk
+    // corrections). Unlike "error", "notice" never throws unhandled.
+    stream.on("notice", (err: Error) => this.emit("notice", managed.key, err));
     stream.on("error", (err: Error) => this.reportError(managed.key, err));
     stream.on("close", () => {
       const stillOpen = this.sessions.get(mapKey);

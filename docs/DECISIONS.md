@@ -217,6 +217,21 @@ present as something other than what they are, are in
 as `internal_error`, mentioning nothing about audio), and a BYO-LLM block is
 rejected on `session.update` and works only on a stored agent.
 
+## 11. WhatsApp detection: the audio mode may stay NORMAL — watch the owner pid
+
+**Sep 05.** The earlier assumption — a live WhatsApp call puts the device in
+`MODE_IN_COMMUNICATION` owned by the calling package — held on the build it was
+discovered against and is **false on the realme RMX3624**: the mode stays
+`NORMAL` for the entire call and the only field in `dumpsys audio` that changes
+is `mModeOwnerPid` (0 → <pid> → 0), resolved to a package with
+`ps -A -o PID,NAME`. `dumpsys telecom` keeps an empty call list (the call never
+enters Telecom) and logcat emits no relevant setMode/Telecom line, so neither is
+a signal either. Consequence: `isVoipCallActive()` counts a non-zero owner pid
+as a VoIP call even when the mode never rises, and the ringing-vs-connected
+distinction cannot come from `uiautomator` on this device (it returns the
+launcher mid-call, byte-identical every second) — only OCR on a `screencap`
+reads the overlay.
+
 ## 9. Deprecated — do not use
 
 - **V2 streaming** (`/v2/realtime/ws`): retired; closes with 410.

@@ -64,6 +64,20 @@ export interface AppConfig {
     apiKey: string;
     region: Region;
     speechModel: string;
+    /**
+     * ASSEMBLYAI_LANGUAGE_CODES — steer transcription toward these languages
+     * (U3.5 Pro only), e.g. ["en","fr"]. Absent = the service's automatic
+     * detection, which is the right answer for a mix of Arabic and French.
+     */
+    languageCodes?: string[];
+    /** ASSEMBLYAI_VAD_THRESHOLD — VAD confidence threshold 0-1. Absent = the service default. */
+    vadThreshold?: number;
+    /** ASSEMBLYAI_MIN_TURN_SILENCE — ms of silence before an end-of-turn check (50-10000). */
+    minTurnSilence?: number;
+    /** ASSEMBLYAI_MAX_TURN_SILENCE — ms of silence before a turn is forced to end. */
+    maxTurnSilence?: number;
+    /** ASSEMBLYAI_SESSION_HEARTBEAT — emit Heartbeat every 5 s. Present only when on. */
+    sessionHeartbeat?: boolean;
   };
   voiceAgent: VoiceAgentEndpoints & {
     /** VOICE_AGENT_ENABLED. Off unless explicitly turned on. */

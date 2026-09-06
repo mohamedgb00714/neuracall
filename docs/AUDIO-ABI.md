@@ -111,9 +111,29 @@ in rough order of fidelity:
 - **Acoustic coupling** — a speaker next to the phone's mic. Always works,
   sounds like it.
 
-Until Phase 5 wires a real one, `MemoryAudioInjector` stands in: calls run
-end-to-end and the far end simply hears nothing. That is intentional — a
-missing injector must not stop the transcription path from being exercised.
+The concrete host-side player is `CommandAudioInjector`
+(`@neuracall/orchestrator`, `src/audioInjector.ts`): it pipes the PCM it is
+given into a system player aimed at whatever host sink carries the call — an
+HFP sink, or a loopback sink for tests. The player is started lazily on the
+first `write` and reused for a whole reply; preference order is **`aplay`**
+(ALSA), then `ffplay` (FFmpeg) — the only two transports verified live (Sep 06)
+to read raw PCM from stdin:
+
+    aplay  -q -f S16_LE -r <rate> -c <channels> -t raw -
+    ffplay -f s16le -ar <rate> -ch_layout mono -nodisp -autoexit -loglevel quiet -
+
+PipeWire's `pw-play` and `pw-cat` are deliberately rejected: both hand the
+stream to libsndfile, which treats `-` — and even raw files — as a headerless
+format it cannot guess and dies with `failed to open audio file "-": Format not
+recognised` (verified live). `paplay` is rejected too: it has no stdin mode
+(`open(): No such file or directory`). `end()` closes the player's stdin so it
+drains what it has and exits on its own, but that drain is bounded with a ~2 s
+`SIGKILL` force-kill, so a player that swallows EOF or wedges on an audio node
+is killed rather than orphaned.
+
+`MemoryAudioInjector` remains the default when no transport is configured:
+calls run end-to-end and the far end simply hears nothing. That is intentional —
+a missing injector must not stop the transcription path from being exercised.
 
 ### Barge-in
 

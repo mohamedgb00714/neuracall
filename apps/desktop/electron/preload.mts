@@ -150,6 +150,11 @@ interface RedactedSettingsMsg {
     speechModel: string;
     mode: "min_latency" | "balanced" | "max_accuracy";
     keyterms: string[];
+    languageCodes: string[];
+    vadThreshold: number | null;
+    minTurnSilence: number | null;
+    maxTurnSilence: number | null;
+    sessionHeartbeat: boolean;
   };
   llm: {
     apiKey: string;
@@ -175,6 +180,29 @@ interface RedactedSettingsMsg {
     greeting: string;
     systemPrompt: string;
   };
+  /** Per-device agents, keyed by device serial. */
+  voipAgents: Record<
+    string,
+    {
+      agentId: string;
+      name: string;
+      voice: string;
+      greeting: string;
+      systemPrompt: string;
+      keyterms: string[];
+      transcriptionMode: "min_latency" | "balanced" | "max_accuracy" | null;
+      voiceFocus: "near-field" | "far-field" | null;
+      voiceFocusThreshold: number | null;
+      turnDetection: {
+        vadThreshold: number | null;
+        minSilenceMs: number | null;
+        maxSilenceMs: number | null;
+        interruptResponse: boolean;
+        interruptionDelayMs: number | null;
+      };
+      volume: number | null;
+    }
+  >;
   audio: { captureSource: string; injectSink: string };
   autopilot: {
     autoStart: boolean;
@@ -183,6 +211,31 @@ interface RedactedSettingsMsg {
     defaultCountryCode: string;
     healthPort: number | null;
   };
+}
+
+/**
+ * One per-device agent entry as the renderer edits it. Mirrors
+ * `DeviceAgentConfig` in electron/service/settings.ts, where the shape is
+ * defined; `null` fields mean "leave the service default".
+ */
+interface DeviceAgentDraftMsg {
+  agentId: string;
+  name: string;
+  voice: string;
+  greeting: string;
+  systemPrompt: string;
+  keyterms: string[];
+  transcriptionMode: "min_latency" | "balanced" | "max_accuracy" | null;
+  voiceFocus: "near-field" | "far-field" | null;
+  voiceFocusThreshold: number | null;
+  turnDetection: {
+    vadThreshold: number | null;
+    minSilenceMs: number | null;
+    maxSilenceMs: number | null;
+    interruptResponse: boolean;
+    interruptionDelayMs: number | null;
+  };
+  volume: number | null;
 }
 
 /**
@@ -274,6 +327,8 @@ const api = {
   // ---- call control
   dialNumber: (deviceId: string, number: string): Promise<OkResult> =>
     ipcRenderer.invoke("call:dial", { deviceId, number }),
+  dialWhatsApp: (deviceId: string, number: string, cc?: string): Promise<OkResult> =>
+    ipcRenderer.invoke("call:dialWhatsApp", { deviceId, number, cc }),
   openDialer: (deviceId: string, number?: string): Promise<OkResult> =>
     ipcRenderer.invoke("call:openDialer", { deviceId, number }),
   answerCall: (deviceId: string): Promise<OkResult> =>
@@ -306,6 +361,15 @@ const api = {
     ipcRenderer.invoke("settings:save", patch),
   resetSettings: (): Promise<RedactedSettingsMsg> => ipcRenderer.invoke("settings:reset"),
   probeSettings: (): Promise<ProbeReportMsg> => ipcRenderer.invoke("settings:probe"),
+
+  // ---- per-device voice agents
+  saveVoipAgent: (
+    serial: string,
+    config: DeviceAgentDraftMsg,
+  ): Promise<{ ok: boolean; agentId?: string; error?: string }> =>
+    ipcRenderer.invoke("voip-agents:save", { serial, config }),
+  deleteVoipAgent: (serial: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("voip-agents:delete", { serial }),
 
   // ---- autopilot
   enableAutopilot: (): Promise<{ ok: boolean; status?: AutopilotStatusMsg; error?: string }> =>

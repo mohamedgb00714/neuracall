@@ -171,10 +171,20 @@ export type ServerMessage =
  * Outbound (client→server) messages. Audio is sent as raw binary frames;
  * controls are JSON text frames.
  */
+/** `ForceEndpoint` — finalize the current turn immediately (own-VAD / push-to-talk). */
+export interface ForceEndpointMessage {
+  type: "ForceEndpoint";
+}
+
+/** `KeepAlive` — reset the server's `inactivity_timeout` timer during long silences. */
+export interface KeepAliveMessage {
+  type: "KeepAlive";
+}
+
 export type ClientMessage =
   | { type: "Terminate" }
-  | { type: "ForceEndpoint" }
-  | { type: "KeepAlive" }
+  | ForceEndpointMessage
+  | KeepAliveMessage
   | UpdateConfigurationMessage;
 
 /** Fields accepted by `UpdateConfiguration` (all optional; the message is a delta). */

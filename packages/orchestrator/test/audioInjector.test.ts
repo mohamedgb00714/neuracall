@@ -48,13 +48,17 @@ function fakeSpawner() {
 const HAS_ALL = () => true;
 
 test("the player is auto-detected in preference order", () => {
-  assert.deepEqual([...PLAYER_PREFERENCE], ["pw-play", "paplay", "aplay"]);
-  // PipeWire wins when everything is present.
-  assert.equal(detectAudioPlayer(HAS_ALL), "pw-play");
+  assert.deepEqual([...PLAYER_PREFERENCE], ["aplay", "ffplay"]);
+  // aplay wins when everything is present (PipeWire's pw-play/pw-cat and
+  // PulseAudio's paplay are rejected on purpose: none can read raw PCM from stdin).
+  assert.equal(detectAudioPlayer(HAS_ALL), "aplay");
+  for (const rejected of ["pw-cat", "pw-play", "paplay"] as const) {
+    assert.ok(!PLAYER_PREFERENCE.includes(rejected), `${rejected} must never be auto-selected`);
+  }
   // Falls through as each is missing.
   assert.equal(
-    detectAudioPlayer((b) => b !== "pw-play"),
-    "paplay",
+    detectAudioPlayer((b) => b !== "aplay"),
+    "ffplay",
   );
   assert.equal(
     detectAudioPlayer((b) => b === "aplay"),
@@ -69,17 +73,11 @@ test("the player is auto-detected in preference order", () => {
 test("no player installed is a clear error, not a mystery silence", () => {
   assert.throws(
     () => new CommandAudioInjector({ lookPath: () => false }),
-    /No audio player found on PATH.*pipewire-utils/s,
+    /No audio player found on PATH.*alsa-utils/s,
   );
 });
 
 test("each player gets argv describing the raw PCM format", () => {
-  const pw = new CommandAudioInjector({ player: "pw-play", sampleRate: 16000, channels: 1 });
-  assert.deepEqual(pw.buildArgs(), ["--format=s16", "--rate=16000", "--channels=1", "-"]);
-
-  const pa = new CommandAudioInjector({ player: "paplay", sampleRate: 8000, channels: 2 });
-  assert.deepEqual(pa.buildArgs(), ["--raw", "--format=s16le", "--rate=8000", "--channels=2"]);
-
   const al = new CommandAudioInjector({ player: "aplay", sampleRate: 16000, channels: 1 });
   assert.deepEqual(al.buildArgs(), [
     "-q",
@@ -93,32 +91,49 @@ test("each player gets argv describing the raw PCM format", () => {
     "raw",
     "-",
   ]);
+
+  const ff = new CommandAudioInjector({ player: "ffplay", sampleRate: 8000, channels: 2 });
+  assert.deepEqual(ff.buildArgs(), [
+    "-f",
+    "s16le",
+    "-ar",
+    "8000",
+    "-ch_layout",
+    "stereo",
+    "-nodisp",
+    "-autoexit",
+    "-loglevel",
+    "quiet",
+    "-",
+  ]);
 });
 
-test("a sink targets a specific device — this is how Bluetooth HFP is selected", () => {
+test("PipeWire and PulseAudio players are rejected out loud, never a silent no-op", () => {
+  for (const rejected of ["pw-cat", "pw-play", "paplay"] as const) {
+    assert.throws(
+      () => new CommandAudioInjector({ player: rejected }).buildArgs(),
+      rejected === "paplay" ? /no stdin mode/ : /cannot play raw PCM from stdin/s,
+    );
+  }
+});
+
+test("a sink is accepted but not expressed — routing is an ALSA/PipeWire config concern", () => {
   const hfp = "bluez_output.AA_BB_CC_DD_EE_FF.1";
-  assert.ok(
-    new CommandAudioInjector({ player: "pw-play", sink: hfp })
-      .buildArgs()
-      .includes(`--target=${hfp}`),
-  );
-  assert.ok(
-    new CommandAudioInjector({ player: "paplay", sink: hfp })
-      .buildArgs()
-      .includes(`--device=${hfp}`),
-  );
+  const args = new CommandAudioInjector({ player: "aplay", sink: hfp }).buildArgs();
+  assert.ok(!args.includes(`--device=${hfp}`));
+  assert.ok(!args.includes(`--target=${hfp}`));
 });
 
 test("PCM is piped to one long-lived player, not a process per chunk", () => {
   const { spawned, spawnFn } = fakeSpawner();
-  const injector = new CommandAudioInjector({ player: "pw-play", spawnFn });
+  const injector = new CommandAudioInjector({ player: "aplay", spawnFn });
 
   injector.write(Buffer.alloc(320, 1));
   injector.write(Buffer.alloc(320, 2));
   injector.write(Buffer.alloc(320, 3));
 
   assert.equal(spawned.length, 1, "one player for the whole utterance");
-  assert.equal(spawned[0]!.cmd, "pw-play");
+  assert.equal(spawned[0]!.cmd, "aplay");
   assert.equal(spawned[0]!.proc.bytes, 960);
   assert.equal(injector.bytesWritten, 960);
   assert.equal(injector.running, true);
@@ -126,7 +141,7 @@ test("PCM is piped to one long-lived player, not a process per chunk", () => {
 
 test("barge-in kills the player so buffered audio is dropped, then restarts", () => {
   const { spawned, spawnFn } = fakeSpawner();
-  const injector = new CommandAudioInjector({ player: "pw-play", spawnFn });
+  const injector = new CommandAudioInjector({ player: "aplay", spawnFn });
 
   injector.write(Buffer.alloc(3200));
   const first = spawned[0]!.proc;
@@ -149,7 +164,7 @@ test("barge-in kills the player so buffered audio is dropped, then restarts", ()
 
 test("cancel with nothing playing is harmless", () => {
   const { spawned, spawnFn } = fakeSpawner();
-  const injector = new CommandAudioInjector({ player: "pw-play", spawnFn });
+  const injector = new CommandAudioInjector({ player: "aplay", spawnFn });
   injector.cancel();
   assert.equal(spawned.length, 0);
   assert.equal(injector.restartCount, 0);
@@ -157,7 +172,7 @@ test("cancel with nothing playing is harmless", () => {
 
 test("end closes stdin so the player drains, and refuses later writes", () => {
   const { spawned, spawnFn } = fakeSpawner();
-  const injector = new CommandAudioInjector({ player: "pw-play", spawnFn });
+  const injector = new CommandAudioInjector({ player: "aplay", spawnFn });
   injector.write(Buffer.alloc(320));
 
   injector.end();
@@ -166,11 +181,32 @@ test("end closes stdin so the player drains, and refuses later writes", () => {
   assert.throws(() => injector.write(Buffer.alloc(320)), /write after end/);
 });
 
+test("a player that never exits after its stream ends is killed, not orphaned", async () => {
+  const { spawned, spawnFn } = fakeSpawner();
+  const errors: string[] = [];
+  const injector = new CommandAudioInjector({
+    player: "aplay",
+    spawnFn,
+    onError: (m) => errors.push(m),
+  });
+  injector.write(Buffer.alloc(320));
+
+  const player = spawned[0]!.proc;
+  injector.end();
+  assert.equal(player.killed, false, "graceful first — close stdin and let it drain");
+
+  // The FakePlayer never emits 'close', so the drain grace must run out.
+  await new Promise((r) => setTimeout(r, 2300));
+  assert.equal(player.killed, true, "forced SIGKILL after the grace window");
+  assert.equal(player.killSignal, "SIGKILL");
+  assert.match(errors[0] ?? "", /did not exit after its stream ended/);
+});
+
 test("player stderr is surfaced rather than swallowed", async () => {
   const { spawned, spawnFn } = fakeSpawner();
   const errors: string[] = [];
   const injector = new CommandAudioInjector({
-    player: "pw-play",
+    player: "aplay",
     spawnFn,
     onError: (m) => errors.push(m),
   });
@@ -180,14 +216,14 @@ test("player stderr is surfaced rather than swallowed", async () => {
   await new Promise((r) => setTimeout(r, 10));
 
   assert.equal(errors.length, 1);
-  assert.match(errors[0]!, /\[pw-play\] Cannot connect to sink/);
+  assert.match(errors[0]!, /\[aplay\] Cannot connect to sink/);
 });
 
 test("a player that fails to start is reported, not thrown into the call", async () => {
   const { spawned, spawnFn } = fakeSpawner();
   const errors: string[] = [];
   const injector = new CommandAudioInjector({
-    player: "pw-play",
+    player: "aplay",
     spawnFn,
     onError: (m) => errors.push(m),
   });
@@ -196,7 +232,7 @@ test("a player that fails to start is reported, not thrown into the call", async
   spawned[0]!.proc.emit("error", new Error("ENOENT"));
   await new Promise((r) => setTimeout(r, 10));
 
-  assert.match(errors[0]!, /failed to start pw-play: ENOENT/);
+  assert.match(errors[0]!, /failed to start aplay: ENOENT/);
   assert.equal(injector.running, false);
 });
 

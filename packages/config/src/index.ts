@@ -58,11 +58,28 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const systemPrompt = optionalEnv(env, "VOICE_AGENT_SYSTEM_PROMPT");
   const agentModel = optionalEnv(env, "VOICE_AGENT_LLM_MODEL");
 
+  const languageCodes = listEnv(env, "ASSEMBLYAI_LANGUAGE_CODES");
+  const vadThreshold = numberEnv(env, "ASSEMBLYAI_VAD_THRESHOLD", 0, 1);
+  const minTurnSilence = numberEnv(env, "ASSEMBLYAI_MIN_TURN_SILENCE", 50, 10000, {
+    integer: true,
+  });
+  const maxTurnSilence = numberEnv(env, "ASSEMBLYAI_MAX_TURN_SILENCE", 50, 10000, {
+    integer: true,
+  });
+  const sessionHeartbeat = booleanEnv(env, "ASSEMBLYAI_SESSION_HEARTBEAT", false);
+
   return {
     assemblyai: {
       apiKey,
       region,
       speechModel: optionalEnv(env, "ASSEMBLYAI_SPEECH_MODEL") ?? DEFAULT_SPEECH_MODEL,
+      ...(languageCodes !== undefined ? { languageCodes } : {}),
+      ...(vadThreshold !== undefined ? { vadThreshold } : {}),
+      ...(minTurnSilence !== undefined ? { minTurnSilence } : {}),
+      ...(maxTurnSilence !== undefined ? { maxTurnSilence } : {}),
+      // Heartbeat is a domain flag: "off" and "not set" both mean "do not ask
+      // for Heartbeats", so only the on-state is worth carrying.
+      ...(sessionHeartbeat ? { sessionHeartbeat: true } : {}),
       ...endpointsForRegion(region),
     },
     voiceAgent: {
@@ -131,4 +148,48 @@ function booleanEnv(env: NodeJS.ProcessEnv, name: string, fallback: boolean): bo
     `Invalid ${name}="${raw}". Expected one of: ` +
       `${[...TRUE_VALUES, ...FALSE_VALUES].join(", ")}.`,
   );
+}
+
+/**
+ * A comma-separated list from the environment. Blank entries are dropped, and a
+ * list that ends up empty reads as unset — same lenience as a blank variable,
+ * so an absent or half-erased ASSEMBLYAI_LANGUAGE_CODES never becomes an error.
+ */
+function listEnv(env: NodeJS.ProcessEnv, name: string): string[] | undefined {
+  const raw = optionalEnv(env, name);
+  if (raw === undefined) return undefined;
+  const entries = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
+  return entries.length > 0 ? entries : undefined;
+}
+
+/**
+ * A bounded number from the environment. An unrecognised spelling throws rather
+ * than falling back, for the same reason booleanEnv does: a typo'd
+ * `ASSEMBLYAI_VAD_THRESHOLD=o.5` must not silently mean "service default".
+ */
+function numberEnv(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  min: number,
+  max: number,
+  opts: { integer?: boolean } = {},
+): number | undefined {
+  const raw = optionalEnv(env, name);
+  if (raw === undefined) return undefined;
+  const parsed = Number(raw);
+  const valid =
+    Number.isFinite(parsed) &&
+    parsed >= min &&
+    parsed <= max &&
+    (!opts.integer || Number.isInteger(parsed));
+  if (!valid) {
+    throw new Error(
+      `Invalid ${name}="${raw}". Expected a ${opts.integer ? "whole " : ""}number ` +
+        `between ${min} and ${max}.`,
+    );
+  }
+  return parsed;
 }

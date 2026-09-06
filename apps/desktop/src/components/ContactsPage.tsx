@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import type { ContactSummary, CrmCall, TranscriptEntry } from "../types";
+import type { ContactSummary, CrmCall, NeuraCallDevice, TranscriptEntry } from "../types";
+
+/** A dial that is in flight, or the last one that finished — for feedback. */
+interface DialState {
+  number: string;
+  channel: "cellular" | "whatsapp";
+  done: boolean;
+  ok: boolean;
+  error?: string;
+}
 
 /** Add-contact form state. Phones and tags are free text until submit. */
 interface ContactForm {
@@ -72,6 +81,57 @@ export function ContactsPage() {
   const [form, setForm] = useState<ContactForm>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [devices, setDevices] = useState<NeuraCallDevice[]>([]);
+  const [dialDevice, setDialDevice] = useState<string>("");
+  const [dialState, setDialState] = useState<DialState | null>(null);
+
+  useEffect(() => {
+    const bridge = window.neuracall;
+    if (!bridge) return;
+    let cancelled = false;
+    bridge
+      .listDevices()
+      .then((list) => {
+        if (!cancelled) setDevices(list);
+      })
+      .catch(() => {});
+    const off = bridge.onDevicesChange((updated) => {
+      setDevices((prev) =>
+        [...prev.filter((d) => d.id !== updated.id), updated].sort((a, b) =>
+          a.id.localeCompare(b.id),
+        ),
+      );
+    });
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, []);
+
+  // Default the dial to the first online phone, and keep it sensible as
+  // devices come and go.
+  const online = devices.filter((d) => d.adbState === "device");
+  useEffect(() => {
+    if (dialDevice === "" && online.length > 0 && !online.some((d) => d.id === dialDevice)) {
+      setDialDevice(online[0]!.id);
+    }
+    if (online.length === 0 && dialDevice !== "") setDialDevice("");
+  }, [online, dialDevice]);
+
+  const dial = async (number: string, channel: "cellular" | "whatsapp") => {
+    const bridge = window.neuracall;
+    if (!bridge || dialDevice === "") return;
+    setDialState({ number, channel, done: false, ok: false });
+    try {
+      const result =
+        channel === "cellular"
+          ? await bridge.dialNumber(dialDevice, number)
+          : await bridge.dialWhatsApp(dialDevice, number);
+      setDialState({ number, channel, done: true, ok: result.ok, error: result.error });
+    } catch (err) {
+      setDialState({ number, channel, done: true, ok: false, error: String(err) });
+    }
+  };
 
   const refresh = useCallback(async () => {
     const bridge = window.neuracall;
@@ -300,6 +360,69 @@ export function ContactsPage() {
               {current.phones.map((phone) => phone.raw).join(" · ") || "no number on file"}
             </p>
             {current.notes !== null && <p className="contact-notes">{current.notes}</p>}
+
+            <div className="contact-dial">
+              <h3>Call this contact</h3>
+              <label className="settings-label">
+                From
+                <select
+                  className="device-picker"
+                  value={dialDevice}
+                  disabled={online.length === 0}
+                  onChange={(e) => setDialDevice(e.target.value)}
+                >
+                  {online.length === 0 ? (
+                    <option value="">No phone online</option>
+                  ) : (
+                    online.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.label ?? d.id} · {d.phase}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+              {current.phones.length === 0 ? (
+                <p className="muted">Add a number to this contact to call them.</p>
+              ) : (
+                <ul className="dial-actions">
+                  {current.phones.map((phone) => (
+                    <li key={phone.raw}>
+                      <span className="dial-number">{phone.raw}</span>
+                      <button
+                        type="button"
+                        className="btn btn-start"
+                        disabled={online.length === 0}
+                        onClick={() => void dial(phone.raw, "cellular")}
+                      >
+                        Call
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={online.length === 0}
+                        onClick={() => void dial(phone.raw, "whatsapp")}
+                      >
+                        WhatsApp
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {dialState !== null && !dialState.done && (
+                <p className="muted">
+                  Dialling {dialState.channel === "whatsapp" ? "WhatsApp " : ""}
+                  {dialState.number} on {dialDevice}…
+                </p>
+              )}
+              {dialState !== null && dialState.done && (
+                <p className={dialState.ok ? "muted" : "settings-error"}>
+                  {dialState.ok
+                    ? `${dialState.channel === "whatsapp" ? "WhatsApp " : ""}call to ${dialState.number} started.`
+                    : `Could not dial ${dialState.number}: ${dialState.error ?? "unknown error"}`}
+                </p>
+              )}
+            </div>
 
             <h3>Call history</h3>
             {calls === null ? (

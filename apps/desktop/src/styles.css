@@ -786,6 +786,13 @@ h2 {
   flex-wrap: wrap;
 }
 
+/* Per-device agent card: the save/delete row under its form fields. */
+.device-agents-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .settings-confirm {
   display: flex;
   align-items: center;
@@ -938,6 +945,49 @@ h2 {
   margin: 8px 0 0;
   font-size: 12px;
   white-space: pre-wrap;
+}
+
+.contact-dial {
+  margin: 16px 0 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.contact-dial h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.contact-dial .settings-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.device-picker {
+  min-width: 220px;
+}
+
+.dial-actions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dial-actions li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dial-actions .dial-number {
+  flex: 1;
 }
 
 .contact-no-transcript {

@@ -6,6 +6,7 @@ import type {
   TurnEvent,
   SpeakerRevisionEvent,
   TerminationMessage,
+  HeartbeatMessage,
 } from "../src/types.js";
 import { MockA2I, testConfig, TEST_PARAMS } from "./mockA2I.js";
 
@@ -107,12 +108,14 @@ test("honors Termination as the terminal message", async () => {
   assert.equal(terminated[0]!.session_duration_seconds, 15.0);
 });
 
-test("maps a 3007 close to a typed error and corrects the chunk size without crashing", async () => {
+test("maps a 3007 close to a notice and corrects the chunk size without crashing", async () => {
   const server = new MockA2I();
   const stream = openStream(server);
   const errors: Error[] = [];
+  const notices: Error[] = [];
   const warnings: unknown[] = [];
   stream.on("error", (e: Error) => errors.push(e));
+  stream.on("notice", (e: Error) => notices.push(e));
   stream.on("warn", (w: unknown) => warnings.push(w));
   await stream.connect();
 
@@ -122,9 +125,10 @@ test("maps a 3007 close to a typed error and corrects the chunk size without cra
   // Server closes with 3007 (bad audio chunk size) — must not throw/reject.
   assert.doesNotThrow(() => server.socket.emulateServerClose(3007));
 
-  assert.equal(errors.length, 1, "should emit a typed error");
-  assert.match(errors[0]!.message, /chunk size corrected/i);
-  assert.equal(warnings.length, 1, "should emit a warn before the error");
+  assert.equal(errors.length, 0, "a recoverable 3007 is notice, not error");
+  assert.equal(notices.length, 1, "should emit a typed notice");
+  assert.match(notices[0]!.message, /chunk size corrected/i);
+  assert.equal(warnings.length, 1, "should emit a warn before the notice");
 
   // The recommended chunk size was halved toward the 50ms floor.
   assert.ok(stream.chunkSizeBytes < before, "chunk size should shrink after 3007");
@@ -196,4 +200,80 @@ test("stays quiet when the served model matches, or is not echoed at all", async
 
     assert.deepEqual(warnings, []);
   }
+});
+
+test("a server Error frame emits exactly one typed error with errorCode, not an Unknown-message error", async () => {
+  const server = new MockA2I();
+  const stream = openStream(server);
+  const errors: Error[] = [];
+  stream.on("error", (e: Error) => errors.push(e));
+  await stream.connect();
+
+  server.sendToClient({ type: "Error", error_code: 4001, error: "invalid_mode: moonlight" });
+
+  // Before the Error case existed, this frame fell through to the default
+  // branch and surfaced as a generic "Unknown server message type: Error".
+  assert.equal(errors.length, 1, "exactly one error event — the typed server error");
+  assert.match(errors[0]!.message, /Realtime server error 4001/);
+  assert.match(errors[0]!.message, /invalid_mode: moonlight/);
+  assert.equal((errors[0] as { errorCode?: number }).errorCode, 4001, "error_code is carried on the error");
+  assert.ok(
+    !errors[0]!.message.includes("Unknown server message type"),
+    "the bogus unknown-type error must not be emitted",
+  );
+});
+
+test("an unrecoverable server Error frame with no error listener throws (documented contract)", async () => {
+  // "error" is Node-special: a consumer that treats the stream as fatal must
+  // attach an error listener, and an irrecoverable server Error frame is the
+  // one case where an unhandled emit is allowed to throw. The class doc on
+  // RealtimeStream states this requirement explicitly.
+  const server = new MockA2I();
+  const stream = openStream(server);
+  await stream.connect();
+  assert.equal(stream.listenerCount("error"), 0, "no subscriber, as in the crash case");
+
+  assert.throws(() => server.sendToClient({ type: "Error", error_code: 3007, error: "bad chunk size" }));
+});
+
+test("a Heartbeat frame emits a heartbeat event and never errors or throws", async () => {
+  const server = new MockA2I();
+  const stream = openStream(server);
+  const beats: HeartbeatMessage[] = [];
+  const errors: Error[] = [];
+  stream.on("heartbeat", (b: HeartbeatMessage) => beats.push(b));
+  stream.on("error", (e: Error) => errors.push(e));
+  await stream.connect();
+
+  server.sendToClient({
+    type: "Heartbeat",
+    total_audio_received_ms: 1234,
+    total_duration_ms: 5678,
+    realtime_factor: 0.5,
+    max_speech_probability: 0.8,
+  });
+
+  assert.equal(errors.length, 0, "a heartbeat must not surface as an error");
+  assert.equal(beats.length, 1);
+  assert.deepEqual(beats[0], {
+    type: "Heartbeat",
+    total_audio_received_ms: 1234,
+    total_duration_ms: 5678,
+    realtime_factor: 0.5,
+    max_speech_probability: 0.8,
+  });
+
+  // With no heartbeat listener at all the frame still must not throw.
+  const quiescent = new MockA2I();
+  const bare = openStream(quiescent);
+  await bare.connect();
+  assert.doesNotThrow(() =>
+    quiescent.sendToClient({
+      type: "Heartbeat",
+      total_audio_received_ms: 1,
+      total_duration_ms: 2,
+      realtime_factor: 0.25,
+      max_speech_probability: 0.5,
+    }),
+  );
 });

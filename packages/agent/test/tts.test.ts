@@ -672,3 +672,89 @@ test("a hosted voice left in the environment is not handed to the local engine",
   );
   assert.ok((scoped.client as CommandTts).buildArgs("hi", "/tmp/o.wav").includes("en-gb"));
 });
+
+// ------------------------------------------------------- the LLM-backed default
+
+test("selectTtsClient defaults to an OpenAI-compatible TTS built from the LLM config", async () => {
+  const { fetchFn, calls } = fakeFetch(() => audioResponse(constantPcm(1600, 1000)));
+  const selection = selectTtsClient(
+    { tts: { model: "replace-me" }, llm: { apiKey: KEY, model: "gpt-4o-mini-tts" } },
+    { env: {}, lookPath: onlyOnPath(), fetchFn },
+  );
+
+  assert.equal(selection.provider, "openai");
+  assert.ok(selection.client instanceof OpenAiCompatibleTts);
+  assert.match(selection.description, /from the LLM config/);
+  assert.ok(!selection.description.includes(KEY));
+
+  const speech = await selection.client.synthesize({ text: "  hello there  " });
+  assert.equal(speech.sampleRate, 16000, "the composed path runs at 16 kHz");
+  assert.equal(speech.channels, 1);
+  assert.ok(speech.pcm.length > 0, "a reply yields audible PCM, not silence");
+  assert.ok(Buffer.from(speech.pcm).some((b) => b !== 0));
+
+  // The request travels through the same gateway the LLM client uses, with the
+  // same key and the documented /audio/speech body.
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.url, "https://openrouter.ai/api/v1/audio/speech");
+  assert.equal(headersOf(calls[0])["authorization"], `Bearer ${KEY}`);
+  assert.deepEqual(bodyOf(calls[0]), {
+    model: "gpt-4o-mini-tts",
+    voice: "alloy",
+    input: "hello there",
+    response_format: "pcm",
+  });
+});
+
+test("the LLM-backed default honours LLM_BASE_URL instead of assuming OpenAI", async () => {
+  const { fetchFn, calls } = fakeFetch(() => audioResponse(constantPcm(160, 1)));
+  const selection = selectTtsClient(
+    { tts: { model: "replace-me" }, llm: { apiKey: KEY, model: "openai/gpt-4o-mini-tts" } },
+    { env: { LLM_BASE_URL: "http://127.0.0.1:9000/v1/" }, lookPath: onlyOnPath(), fetchFn },
+  );
+
+  assert.equal(selection.provider, "openai");
+  await selection.client.synthesize({ text: "hi" });
+
+  assert.equal(calls[0]?.url, "http://127.0.0.1:9000/v1/audio/speech");
+});
+
+test("explicit TTS config still beats the LLM-backed default", () => {
+  const selection = selectTtsClient(
+    {
+      tts: { apiKey: KEY, model: "eleven_flash_v2_5" },
+      llm: { apiKey: KEY, model: "openai/gpt-4o-mini-tts" },
+    },
+    { env: {}, lookPath: onlyOnPath("espeak-ng") },
+  );
+
+  assert.equal(selection.provider, "elevenlabs");
+});
+
+test("TTS_PROVIDER=openai builds the LLM-backed client when no TTS key is set", () => {
+  const selection = selectTtsClient(
+    { tts: { model: "replace-me" }, llm: { apiKey: KEY, model: "gpt-4o-mini-tts" } },
+    { env: { TTS_PROVIDER: "openai" }, lookPath: onlyOnPath("espeak-ng") },
+  );
+
+  assert.equal(selection.provider, "openai");
+  assert.ok(selection.client instanceof OpenAiCompatibleTts);
+});
+
+test("an explicit TTS_PROVIDER=silent still wins over the LLM-backed default", () => {
+  const selection = selectTtsClient(
+    { tts: { model: "replace-me" }, llm: { apiKey: KEY, model: "openai/gpt-4o-mini-tts" } },
+    { env: { TTS_PROVIDER: "silent" }, lookPath: onlyOnPath("espeak-ng") },
+  );
+
+  assert.equal(selection.provider, "silent");
+});
+
+test("silence remains the last resort when the LLM backend itself is incomplete", () => {
+  const selection = selectTtsClient(
+    { tts: { model: "replace-me" }, llm: { apiKey: KEY, model: "" } },
+    { env: {}, lookPath: onlyOnPath() },
+  );
+
+  assert.equal(selection.provider, "silent");
+});

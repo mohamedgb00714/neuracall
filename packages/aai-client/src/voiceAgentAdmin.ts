@@ -168,11 +168,22 @@ export interface StoredAgentTurnDetection {
   maxSilence?: number;
   /** Barge-in: the caller talking over the agent cuts the reply short. */
   interruptResponse?: boolean;
+  /** How long after the caller speaks before the agent interrupts its reply. */
+  interruptionDelayMs?: number;
 }
 
 export interface VoiceAgentInput {
   format?: StoredAgentAudioFormat;
   turnDetection?: StoredAgentTurnDetection;
+  /** Speed-vs-accuracy tradeoff; the agent's pacing presets. */
+  transcriptionMode?: "min_latency" | "balanced" | "max_accuracy";
+  /**
+   * Isolate the caller's voice before transcription. `near-field` for
+   * close-talking mics, `far-field` for speakerphone/laptop/room capture.
+   */
+  voiceFocus?: "near-field" | "far-field";
+  /** Voice-focus aggressiveness 0.0-1.0; requires `voiceFocus`. */
+  voiceFocusThreshold?: number;
   /** Domain terms biasing recognition — names, products, street names. */
   keyterms?: readonly string[];
 }
@@ -233,11 +244,15 @@ export interface StoredAgentTurnDetectionWire {
   min_silence?: number;
   max_silence?: number;
   interrupt_response?: boolean;
+  interruption_delay?: number;
 }
 
 export interface VoiceAgentInputWire {
   format: StoredAgentAudioFormatWire;
   turn_detection?: StoredAgentTurnDetectionWire;
+  transcription_mode?: "min_latency" | "balanced" | "max_accuracy";
+  voice_focus?: "near-field" | "far-field";
+  voice_focus_threshold?: number;
   keyterms?: string[];
 }
 
@@ -328,10 +343,18 @@ function toWireInput(input: VoiceAgentInput | undefined): VoiceAgentInputWire {
     if (td.minSilence !== undefined) detection.min_silence = td.minSilence;
     if (td.maxSilence !== undefined) detection.max_silence = td.maxSilence;
     if (td.interruptResponse !== undefined) detection.interrupt_response = td.interruptResponse;
+    if (td.interruptionDelayMs !== undefined) detection.interruption_delay = td.interruptionDelayMs;
     wire.turn_detection = detection;
   }
   if (input?.keyterms !== undefined && input.keyterms.length > 0) {
     wire.keyterms = [...input.keyterms];
+  }
+  if (input?.transcriptionMode !== undefined) {
+    wire.transcription_mode = input.transcriptionMode;
+  }
+  if (input?.voiceFocus !== undefined) wire.voice_focus = input.voiceFocus;
+  if (input?.voiceFocusThreshold !== undefined) {
+    wire.voice_focus_threshold = input.voiceFocusThreshold;
   }
   return wire;
 }

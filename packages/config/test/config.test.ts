@@ -174,6 +174,60 @@ test("getConfig reads process.env by default", () => {
   }
 });
 
+test("getConfig parses the STT tuning vars into assemblyai", () => {
+  const cfg = getConfig({
+    ASSEMBLYAI_API_KEY: FAKE_KEY,
+    ASSEMBLYAI_LANGUAGE_CODES: " en, fr ,ar",
+    ASSEMBLYAI_VAD_THRESHOLD: "0.6",
+    ASSEMBLYAI_MIN_TURN_SILENCE: "2000",
+    ASSEMBLYAI_MAX_TURN_SILENCE: "6000",
+    ASSEMBLYAI_SESSION_HEARTBEAT: "on",
+  });
+  assert.deepEqual(cfg.assemblyai.languageCodes, ["en", "fr", "ar"]);
+  assert.equal(cfg.assemblyai.vadThreshold, 0.6);
+  assert.equal(cfg.assemblyai.minTurnSilence, 2000);
+  assert.equal(cfg.assemblyai.maxTurnSilence, 6000);
+  assert.equal(cfg.assemblyai.sessionHeartbeat, true);
+  assert.equal(cfg.assemblyai.speechModel, DEFAULT_SPEECH_MODEL, "the rest keeps its defaults");
+});
+
+test("getConfig leaves the tuning fields absent when unset", () => {
+  const cfg = getConfig({ ASSEMBLYAI_API_KEY: FAKE_KEY });
+  assert.equal(cfg.assemblyai.languageCodes, undefined);
+  assert.equal(cfg.assemblyai.vadThreshold, undefined);
+  assert.equal(cfg.assemblyai.minTurnSilence, undefined);
+  assert.equal(cfg.assemblyai.maxTurnSilence, undefined);
+  assert.equal(cfg.assemblyai.sessionHeartbeat, undefined, "off means absent, not false");
+});
+
+test("getConfig treats an empty language list as unset", () => {
+  const cfg = getConfig({ ASSEMBLYAI_API_KEY: FAKE_KEY, ASSEMBLYAI_LANGUAGE_CODES: " , ," });
+  assert.equal(cfg.assemblyai.languageCodes, undefined);
+});
+
+test("getConfig throws on a malformed tuning value instead of ignoring it", () => {
+  assert.throws(
+    () => getConfig({ ASSEMBLYAI_API_KEY: FAKE_KEY, ASSEMBLYAI_VAD_THRESHOLD: "o.5" }),
+    /Invalid ASSEMBLYAI_VAD_THRESHOLD="o.5"/,
+  );
+  assert.throws(
+    () => getConfig({ ASSEMBLYAI_API_KEY: FAKE_KEY, ASSEMBLYAI_VAD_THRESHOLD: "1.1" }),
+    /between 0 and 1/,
+  );
+  assert.throws(
+    () => getConfig({ ASSEMBLYAI_API_KEY: FAKE_KEY, ASSEMBLYAI_MIN_TURN_SILENCE: "40" }),
+    /between 50 and 10000/,
+  );
+  assert.throws(
+    () => getConfig({ ASSEMBLYAI_API_KEY: FAKE_KEY, ASSEMBLYAI_MIN_TURN_SILENCE: "2500.5" }),
+    /whole number/,
+  );
+  assert.throws(
+    () => getConfig({ ASSEMBLYAI_API_KEY: FAKE_KEY, ASSEMBLYAI_SESSION_HEARTBEAT: "flase" }),
+    /Invalid ASSEMBLYAI_SESSION_HEARTBEAT="flase"/,
+  );
+});
+
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) delete process.env[name];
   else process.env[name] = value;

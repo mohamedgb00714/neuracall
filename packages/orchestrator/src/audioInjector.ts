@@ -31,11 +31,29 @@ import { accessSync, constants as fsConstants } from "node:fs";
 import { join } from "node:path";
 import type { AudioInjector } from "@neuracall/audio-pipeline";
 
-/** Players that can read raw PCM from stdin, best first. */
-export type AudioPlayer = "pw-play" | "paplay" | "aplay";
+/**
+ * Players that can read raw PCM from stdin, best first.
+ *
+ * Live-tested on this host (Sep 06): aplay reads raw PCM from stdin and plays
+ * it; ffplay does too. PipeWire's tools do NOT — `pw-play` and `pw-cat` hand
+ * the stream to libsndfile, which treats `-` (and even raw files) as a
+ * headerless format it cannot guess and dies with `Format not recognised`; only
+ * real header-carrying files play. paplay has no stdin mode at all (`open():
+ * No such file or directory`). So the working stdin transports are exactly the
+ * two in this union, and the pipewire/pulse binaries are kept in the rejected
+ * set only so forcing one produces a diagnostic instead of a silent no-op.
+ */
+export type AudioPlayer =
+  | "aplay"
+  | "ffplay"
+  /** PipeWire players — rejected: they cannot read raw PCM from stdin. */
+  | "pw-cat"
+  | "pw-play" 
+  /** PulseAudio — no stdin mode. */
+  | "paplay";
 
-/** Candidate players in preference order. PipeWire first on modern Linux. */
-export const PLAYER_PREFERENCE: readonly AudioPlayer[] = ["pw-play", "paplay", "aplay"] as const;
+/** Candidate players in preference order, all capable of raw PCM on stdin. */
+export const PLAYER_PREFERENCE: readonly AudioPlayer[] = ["aplay", "ffplay"] as const;
 
 export interface CommandAudioInjectorOptions {
   /** Player binary. Auto-detected from PATH when omitted. */
@@ -103,7 +121,7 @@ export class CommandAudioInjector implements AudioInjector {
     if (!player) {
       throw new Error(
         `No audio player found on PATH (tried ${PLAYER_PREFERENCE.join(", ")}). ` +
-          `Install pipewire-utils, pulseaudio-utils or alsa-utils, or pass { player }.`,
+          `Install alsa-utils (aplay) or ffmpeg (ffplay), or pass { player }.`,
       );
     }
     this.player = player;
@@ -133,21 +151,31 @@ export class CommandAudioInjector implements AudioInjector {
   buildArgs(): string[] {
     const rate = String(this.sampleRate);
     switch (this.player) {
+      case "pw-cat":
       case "pw-play":
-        return [
-          "--format=s16",
-          `--rate=${rate}`,
-          `--channels=${this.channels}`,
-          ...(this.sink ? [`--target=${this.sink}`] : []),
-          "-",
-        ];
+        throw new Error(
+          `${this.player} cannot play raw PCM from stdin: it hands the stream to ` +
+            `libsndfile, which rejects '-' and raw files alike with 'Format not recognised'. ` +
+            `Use aplay (alsa-utils) or ffplay (ffmpeg).`,
+        );
       case "paplay":
+        throw new Error(
+          "paplay has no stdin mode (it opens a file path and fails on '-'). Use aplay " +
+            "(alsa-utils) or ffplay (ffmpeg).",
+        );
+      case "ffplay":
         return [
-          "--raw",
-          "--format=s16le",
-          `--rate=${rate}`,
-          `--channels=${this.channels}`,
-          ...(this.sink ? [`--device=${this.sink}`] : []),
+          "-f",
+          "s16le",
+          "-ar",
+          rate,
+          "-ch_layout",
+          this.channels === 2 ? "stereo" : "mono",
+          "-nodisp",
+          "-autoexit",
+          "-loglevel",
+          "quiet",
+          "-",
         ];
       case "aplay":
         // aplay has no sink concept; routing is an ALSA/PipeWire config concern.
@@ -181,13 +209,29 @@ export class CommandAudioInjector implements AudioInjector {
   end(): void {
     if (this.ended) return;
     this.ended = true;
-    // Close stdin so the player drains what it has, then let it exit on its own.
+    const proc = this.proc;
+    this.proc = null;
+    if (!proc || proc.killed) return;
+    // Close stdin so the player drains what it has and exits on its own.
     try {
-      this.proc?.stdin?.end();
+      proc.stdin?.end();
     } catch {
       /* already gone */
     }
-    this.proc = null;
+    // A player that never exits (a swallowed EOF, a wedged PipeWire node)
+    // would otherwise be orphaned: its 'close' listener fires never, and no one
+    // holds it any more. Bound the drain with a forced kill.
+    const forceKill = setTimeout(() => {
+      if (proc.killed) return;
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
+      this.onError?.("audio player did not exit after its stream ended; killed it.");
+    }, 2000);
+    forceKill.unref?.();
+    proc.once("close", () => clearTimeout(forceKill));
   }
 
   private ensureProcess(): ChildProcess {

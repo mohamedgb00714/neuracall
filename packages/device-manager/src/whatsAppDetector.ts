@@ -34,6 +34,13 @@ export interface AudioModeState {
   mode: AudioMode;
   /** "" when the dump reports a mode but does not name the requesting package. */
   owner: string;
+  /**
+   * The pid holding the audio mode, or "" when the dump has no such field.
+   * Some OEMs keep `mode` at NORMAL for the whole of a VoIP call and only set
+   * `mModeOwnerPid` — live-verified on the Realme RMX3624 — so a non-zero pid
+   * is the only audio-mode indicator those devices emit.
+   */
+  ownerPid: string;
 }
 
 /** Capability that detects an incoming call's channel on a device. */
@@ -86,16 +93,31 @@ export class AdbCallChannelDetector implements CallChannelDetector {
       };
     }
 
-    // MODE_IN_COMMUNICATION identifies a VoIP call on *any* app without knowing
-    // anything about that app's UI. An owner missing from the registry still
-    // counts as a call — it reports the generic "voip" channel rather than
-    // being dropped. The owner must NOT gate presence: some OEM builds (verified
-    // on the Realme RMX3624 dev handset) report MODE_IN_COMMUNICATION with a
-    // blank Mode-owner / mModeOwnerPid 0, and requiring a non-empty owner here
-    // would silently drop every real call on those devices.
     const audio = parseAudioModeState(await this.dump(endpoint, ["dumpsys", "audio"]));
-    const audioCall = audio.mode === "in_communication";
-    const audioOwner = audio.owner || "voip";
+
+    // Resolve the mode-owner pid to its package. This is the decisive signal on
+    // OEMs whose audio mode never leaves NORMAL during a VoIP call: the pid is
+    // the only thing in `dumpsys audio` that changes (live-verified on the
+    // Realme RMX3624, `mModeOwnerPid` 0 -> <whatsapp pid> -> 0 across a call).
+    const pidHoldsMode = isModeOwnerPidSet(audio.ownerPid);
+    let ownerPkg = "";
+    if (pidHoldsMode) {
+      const ps = await this.dump(endpoint, ["ps", "-A", "-o", "PID,NAME"]);
+      for (const line of ps.split("\n")) {
+        const m = line.trim().match(/^(\d+)\s+([A-Za-z0-9._:]+)$/);
+        if (m && m[1] === audio.ownerPid) {
+          ownerPkg = m[2] ?? "";
+          break;
+        }
+      }
+    }
+    // MODE_IN_COMMUNICATION identifies a VoIP call on *any* app without knowing
+    // anything about that app's UI. A non-zero mode-owner pid counts the same,
+    // for the OEM builds above that never raise the mode. An owner that cannot
+    // be named either way still counts as a call — it reports the generic
+    // "voip" channel rather than being dropped.
+    const audioCall = audio.mode === "in_communication" || pidHoldsMode;
+    const audioOwner = ownerPkg || audio.owner || "voip";
 
     const foreground = await this.foregroundApp(endpoint);
     const foregroundChannel = channelForPackage(foreground);
@@ -250,6 +272,9 @@ const AUDIO_MODE_PATTERNS: readonly RegExp[] = [
  */
 const CURRENT_OWNER_PATTERN = /(?:^|\n)[\s-]*Mode owner\s*[:=][ \t]*([^\n]*)/i;
 
+/** The pid holding the audio mode, where the OEM prints one (`mModeOwnerPid`). */
+const OWNER_PID_PATTERN = /(?:^|\n)[\s-]*mModeOwnerPid\s*[:=]\s*(\d+)/i;
+
 /** `setMode` entries in the phone-state event log, oldest first. */
 const SET_MODE_PATTERN = /setMode\((?:mode=)?(MODE_[A-Z_]+)\)/g;
 
@@ -320,12 +345,18 @@ export function parseAudioModeState(dump: string): AudioModeState {
   }
 
   // A device that is not in a call has no owner, whatever the log remembers.
-  if (mode === "normal") return { mode, owner: "" };
+  if (mode === "normal") {
+    return { mode, owner: "", ownerPid: dump.match(OWNER_PID_PATTERN)?.[1]?.trim() ?? "" };
+  }
 
   const currentOwnerField = dump.match(CURRENT_OWNER_PATTERN);
   if (currentOwnerField) {
     const stated = currentOwnerField[1] ?? "";
-    return { mode, owner: stated.match(MODE_OWNER_PATTERN)?.[1] ?? extractPackage(stated) };
+    return {
+      mode,
+      owner: stated.match(MODE_OWNER_PATTERN)?.[1] ?? extractPackage(stated),
+      ownerPid: dump.match(OWNER_PID_PATTERN)?.[1]?.trim() ?? "",
+    };
   }
 
   let owner = "";
@@ -335,7 +366,11 @@ export function parseAudioModeState(dump: string): AudioModeState {
     if (pkg) owner = pkg;
   }
 
-  return { mode, owner };
+  return {
+    mode,
+    owner,
+    ownerPid: dump.match(OWNER_PID_PATTERN)?.[1]?.trim() ?? "",
+  };
 }
 
 /** Current audio mode from a `dumpsys audio` blob. */
@@ -352,10 +387,18 @@ export function parseAudioModeOwner(dump: string): string {
  * True when an app-level (VoIP) call is up on the device.
  *
  * MODE_IN_COMMUNICATION only — MODE_IN_CALL is the telephony stack's, and that
- * is `dumpsys telephony.registry`'s business, not this one's.
+ * is `dumpsys telephony.registry`'s business, not this one's. A non-zero mode
+ * owner pid counts too: some OEMs keep the mode at NORMAL for a whole VoIP call
+ * and only raise `mModeOwnerPid` (live-verified on the Realme RMX3624).
  */
 export function isVoipCallActive(dump: string): boolean {
-  return parseAudioMode(dump) === "in_communication";
+  const state = parseAudioModeState(dump);
+  return state.mode === "in_communication" || isModeOwnerPidSet(state.ownerPid);
+}
+
+/** True when a pid actually owns the audio mode ("" and "0" both mean none). */
+function isModeOwnerPidSet(pid: string): boolean {
+  return pid !== "" && pid !== "0";
 }
 
 /** True when a UIAutomator dump looks like an incoming WhatsApp call screen. */

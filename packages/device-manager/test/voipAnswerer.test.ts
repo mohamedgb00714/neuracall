@@ -384,3 +384,110 @@ test("skipWake lets a caller that already woke the phone answer without re-check
     "skipWake should not query the screen",
   );
 });
+
+/**
+ * The screen the dump sees when the ringing overlay is NOT the focused window:
+ * uiautomator dumps the other app, and there is no accept control in it at all.
+ */
+const launcherOnlyScreen = '<node clickable="true" text="Messages" bounds="[20,300][200,360]"/>';
+
+test("OCR fallback answers when the dump only sees the launcher", async () => {
+  // The dump is blind to the non-focused ringing overlay; the OCR decoder finds
+  // the accept control in a screencap the dump cannot describe.
+  let captures = 0;
+  let detects = 0;
+  const runner = fakeRunner(launcherOnlyScreen);
+  const answerer = new VoipAnswerer(runner, {
+    sleep: async () => undefined,
+    ocrFallback: {
+      async captureScreen() {
+        captures += 1;
+        return Buffer.from("png");
+      },
+      async detect() {
+        detects += 1;
+        return {
+          resourceId: "",
+          contentDesc: "RÉPONDRE",
+          text: "RÉPONDRE",
+          bounds: { left: 440, top: 1400, right: 600, bottom: 1560 },
+        };
+      },
+    },
+  });
+
+  const result = await answerer.answer("SERIAL", "whatsapp");
+
+  assert.deepEqual(result.tappedAt, ACCEPT_CENTRE);
+  assert.match(result.buttonLabel, /RÉPONDRE/);
+  assert.ok(captures >= 1, "captureScreen was never called");
+  assert.ok(detects >= 1, "detect was never called");
+  assert.ok(
+    runner.commands.some((c) => c.join(" ") === "shell input tap 520 1480"),
+    `expected a tap at the OCR node centre, got ${JSON.stringify(runner.commands)}`,
+  );
+});
+
+test("an OCR that finds nothing still times out without a tap", async () => {
+  // A null detect is not a control; the poll must keep going and fail loudly,
+  // never press a coordinate that was not found.
+  const runner = fakeRunner(launcherOnlyScreen);
+  const answerer = new VoipAnswerer(runner, {
+    buttonTimeoutMs: 30,
+    pollIntervalMs: 10,
+    sleep: async () => undefined,
+    ocrFallback: {
+      async captureScreen() {
+        return Buffer.from("png");
+      },
+      async detect() {
+        return null;
+      },
+    },
+  });
+
+  await assert.rejects(
+    () => answerer.answer("SERIAL", "whatsapp"),
+    /No accept control appeared/,
+    "an undecoded frame must not be pressed",
+  );
+  assert.ok(
+    !runner.commands.some((c) => c.includes("tap")),
+    `nothing should have been tapped, got ${JSON.stringify(runner.commands)}`,
+  );
+});
+
+test("a failing OCR decoder cannot abort the poll", async () => {
+  // OCR is secondary: its errors go to onStep and the dump path keeps polling,
+  // so the answer fails with the timeout error, not the decoder's.
+  const steps: string[] = [];
+  const runner = fakeRunner(launcherOnlyScreen);
+  const answerer = new VoipAnswerer(runner, {
+    buttonTimeoutMs: 30,
+    pollIntervalMs: 10,
+    sleep: async () => undefined,
+    onStep: (s) => steps.push(s),
+    ocrFallback: {
+      async captureScreen() {
+        return Buffer.from("png");
+      },
+      async detect() {
+        throw new Error("decoder crashed");
+      },
+    },
+  });
+
+  await assert.rejects(
+    () => answerer.answer("SERIAL", "whatsapp"),
+    (err: Error) => {
+      assert.match(err.message, /No accept control appeared/);
+      assert.doesNotMatch(err.message, /decoder crashed/);
+      assert.match(err.message, /OCR fallback was attempted/);
+      return true;
+    },
+  );
+  assert.ok(
+    steps.some((s) => s.startsWith("ocr:")),
+    `expected an ocr: step, got ${JSON.stringify(steps)}`,
+  );
+});

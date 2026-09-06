@@ -149,6 +149,52 @@ test("bridge emits exit with the code and ends the sink when scrcpy closes", asy
   assert.equal(h.ended, 1);
 });
 
+test("a restarted bridge does not end() the sink mid-run or throw", async () => {
+  // Regression: the same sink is reused across runs but `sinkEnded` is reset per
+  // start, so end() fires exactly once per run (flushing each capture) and
+  // `finished` guards against a second end within one run. The former bug was
+  // that a restart threw 'already running' / re-ended a finished sink and broke
+  // restartability entirely.
+  const fake = new FakeChild();
+  const h = makeBridge(fake);
+
+  // Run one: exit normally, sink ended once for this run.
+  h.bridge.start();
+  fake.emit("close", 0, null);
+  assert.equal(h.ended, 1, "run one ends the sink exactly once");
+
+  // Run two on the same bridge object (same sink): must start cleanly (no
+  // 'already running'), run, and end the sink once more.
+  assert.doesNotThrow(() => h.bridge.start());
+  assert.equal(h.bridge.running, true, "the bridge must be restartable");
+  fake.emit("close", 0, null);
+  assert.equal(h.bridge.running, false);
+  assert.equal(h.ended, 2, "end() fires once per run, never twice in one run");
+});
+
+test("a spawn failure clears the process handle so a restart does not throw", () => {
+  // Regression: a spawn failure (e.g. scrcpy binary missing) emits "error"
+  // without a matching "close", leaving this.proc set — a restart then threw
+  // "already running" for a process that never started.
+  const fake = new FakeChild();
+  const h = makeBridge(fake);
+  const errors: string[] = [];
+  h.bridge.on("error", (m) => errors.push(m));
+
+  h.bridge.start();
+  assert.ok(h.bridge.running, "bridge thinks it started");
+
+  // FakeChild emits "error" without "close" — exactly the spawn-failure shape.
+  fake.emit("error", new Error("ENOENT"));
+
+  assert.match(errors[0] ?? "", /ENOENT/);
+  assert.equal(h.bridge.running, false, "the proc handle must be cleared on spawn error");
+
+  // A restart must not throw "already running".
+  assert.doesNotThrow(() => h.bridge.start());
+  fake.emit("close", 0, null);
+});
+
 test("bridge refuses to start twice", () => {
   const fake = new FakeChild();
   const { bridge } = makeBridge(fake);
