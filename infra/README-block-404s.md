@@ -1,10 +1,35 @@
-# Blocking web scanners at the autoplans.dev reverse proxy
+# Blocking web scanners at the autoplans.dev edge/origin
+
+> APPLY-BLOCKER RESOLVED — READ THIS FIRST.
+> Production `autoplans.dev` is served through **Cloudflare** (verified live
+> 06 Sep 2026: `Server: cloudflare`, `CF-RAY` on every response,
+> `cf-cache-status: DYNAMIC`, A records `172.67.179.148` + `104.21.35.209`,
+> both Cloudflare anycast, TLS from Google Trust Services = CF edge cert).
+> Every scanner probe transits Cloudflare *before* any origin reverse proxy,
+> so origin-side nginx rules would only ever see the tail of the traffic.
+> **The primary fix is a Cloudflare WAF custom rule**, kept as
+> action:"log" first, then flipped to "block":
+>
+>   ```bash
+>   wrangler deploy                  # or, from the dashboard: Security > WAF > Custom rules
+>   ```
+>   For the dashboard: create a rule, paste each `expression` from
+>   `infra/cloudflare-waf-block-404-noise.json` (4 rules), action = Log, wait
+>   ~1h on the telemetry, then change action to Block (GF answers Cloudflare's
+>   own 403 block page at the edge; the probe never reaches origin and never
+>   becomes a `NotFound` event). For API PUT (needs `CLOUDFLARE_API_TOKEN` +
+>   the zone id), the ruleset JSON IS the PUT body for
+>   `/zones/{zone_id}/rulesets/phases/http_request_firewall_custom/entrypoint`,
+>   reviewed in that file's `deployment` field.
+>
+> The nginx rules that follow remain as **origin defense-in-depth** behind
+> Cloudflare (for a real nginx origin), not the primary fix.
 
 Goal: stop vulnerability-scanner and credential-harvest 404 noise (963
 events / 7d in error telemetry, 0 real bugs among them) from ever reaching
-the app, so it stops creating `NotFound` error groups. The block happens in
-**nginx**, before `proxy_pass`, returning `410 Gone` for scanner paths and
-`403 Forbidden` for known scanner User-Agents.
+the app, so it stops creating `NotFound` error groups. The primary block is a
+Cloudflare WAF custom rule at the edge, backed by these **nginx** drop-ins
+(`410 Gone` scanner paths / `403` scanner User-Agents) for an nginx origin.
 
 ## Why nginx and why these status codes
 
@@ -148,9 +173,10 @@ sudo nginx -t && sudo systemctl reload nginx
   simulated for all observed probe paths and a set of legit paths) - NOT with
   a real `nginx -t`, which requires the nginx binary + root. Run the real
   `sudo nginx -t` before relying on it.
-- Cloudflare fronts `autoplans.dev`. Out of scope here, but complementary
-  Cloudflare-side rules (block known-404, managed malicious-activity rules)
-  would stop the noise even further upstream.
+- Cloudflare fronts `autoplans.dev` — confirmed 06 Sep 2026 (Server:
+  cloudflare, CF-RAY, DYNAMIC cache, CF anycast A records, CF edge cert).
+  The complementary Cloudflare-side rules are the PRIMARY fix (see the banner
+  at the top of this file and `infra/cloudflare-waf-block-404-noise.json`).
 ## CORRECTION (verified 06 Sep 2026, apply-blocker)
 
 On THIS host the nginx story is stale: `nginx` is NOT installed and is
