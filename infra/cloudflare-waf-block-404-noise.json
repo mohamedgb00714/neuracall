@@ -1,0 +1,35 @@
+{
+  "description": "Blocks vulnerability-scanner / credential-probe 404 noise at the Cloudflare edge so it never reaches the autoplans.dev origin. Edge copy of infra/nginx-block-404-noise.conf semantics for the case where raw scanner requests never see a CAAS/origin reverse proxy.",
+  "kind": "cloudflare_waf_custom_rules",
+  "phase": "http_request_firewall_custom",
+  "zone_target": "autoplans.dev",
+  "deployment": "PUT /zones/{zone_id}/rulesets/phases/http_request_firewall_custom/entrypoint with this as the body. In the dashboard this is Security > WAF > Custom rules > Create rule. First deploy with action:\"log\" for a watch window, then flip to \"block\". 'block' answers Cloudflare's own 403 block page at the edge; the probe never reaches the origin and never becomes a NotFound telemetry event.",
+  "rules": [
+    {
+      "action": "block",
+      "expression": "(any(lower(http.request.uri.path), lower(http.request.uri.path) matches \".*\\\\.(zip|rar|7z|tar|tgz|bz2|xz|sql(\\\\.gz)?|sqlite|sqlite3|db|bak|old|backup|dump|orig|save|tmp)$\")) or starts_with(lower(http.request.uri.path), \"/backup\") or lower(http.request.uri.path) matches \"^/(db|database)(\\\\.|$)\" or any(lower(http.request.uri.path), lower(http.request.uri.path) matches \"^(configs?|settings|application|environment|local|web)\\\\.(json|js|yaml|yml|py|php|ini|conf|config|env|txt|xml)$\") or any(lower(http.request.uri.path), lower(http.request.uri.path) matches \"^(appsettings[^/]*\\\\.json|local\\\\.settings\\\\.json|web\\\\.config)$\") or lower(http.request.uri.path) matches \"^/(config|emails)/[^/]*\\\\.(js|json|py|php|env|yaml|yml|ini|conf)$\"",
+      "description": "Archive/database/config-dump files (any depth, extension-based): *.zip *.tar* *.sql* *.sqlite *.db *.bak *.old *.backup, /db*, /database*, /backup*, settings/config/env dump-shaped files. Mirrors the nginx map extension and dump rules.",
+      "enabled": true
+    },
+    {
+      "action": "block",
+      "expression": "(any(lower(http.request.uri.path), lower(http.request.uri.path) matches \"^\\\\.(env(\\\\.[a-z0-9_-]+)?|htpasswd|htaccess|netrc|npmrc|s3cfg|pgpass|my\\\\.cnf|pem|key|p12|pfx|jks|keystore)$\")) or lower(http.request.uri.path) matches \"^/env(\\\\.|$)\" or any(lower(http.request.uri.path), lower(http.request.uri.path) matches \"^(id_rsa|id_dsa|id_ecdsa|id_ed25519)$\") or any(lower(http.request.uri.path), lower(http.request.uri.path) matches \"^(credentials[^/]*\\\\.json|service[_-]?account[^/]*\\\\.json|secrets?\\\\.[a-z0-9]+|terraform\\\\.(tfstate|tfvars))$\") or any(lower(http.request.uri.path), lower(http.request.uri.path) matches \"^\\\\.(git|svn|hg)$\") or lower(http.request.uri.path) matches \"^/\\\\.git/\" or any(lower(http.request.uri.path), lower(http.request.uri.path) matches \"^[^/]+[~]$\") or ends_with(lower(http.request.uri.path), \".swp\")",
+      "description": "Credential dotfiles / secret key material and text-editor droppings: .env variants, /env.*, .git access, ssh keys, keystores, terraform state, config~ / *.swp.",
+      "enabled": true
+    },
+    {
+      "action": "block",
+      "expression": "starts_with(lower(http.request.uri.path), \"/wp\") or any(lower(http.request.uri.path), lower(http.request.uri.path) matches \"^(wp-json|xmlrpc\\\\.php)$\") or starts_with(lower(http.request.uri.path), \"/livewire\") or lower(http.request.uri.path) matches \"^/(telescope|_debugbar|_profiler|horizon|nova|pulse|phpinfo)(/|$)\" or lower(http.request.uri.path) matches \"^/actuator(/|$)\" or lower(http.request.uri.path) matches \"^/(owa|ecp|autodiscover|exchange|phpmyadmin|pma|cgi-bin|aspnet_client|webdav)(/|$)\" or lower(http.request.uri.path) matches \"^/(graphql|gql|graphiql)(/|$)\" or starts_with(lower(http.request.uri.path), \"/swagger\") or lower(http.request.uri.path) matches \"^/openapi(\\\\.|_)\" or lower(http.request.uri.path) matches \"^/api-docs(/|$)\" or lower(http.request.uri.path) matches \"^/(_cat|elasticsearch|kibana|logstash)(/|$)\" or lower(http.request.uri.path) matches \"^/v2/_catalog(/|$)\" or lower(http.request.uri.path) matches \"^/server$\" or lower(http.request.uri.path) matches \"^/tasting(/|$)\" or lower(http.request.uri.path) matches \"^/api/?$\" or lower(http.request.uri.path) matches \"^/api/(env|config|keys?|secret|credential)\"",
+      "description": "Probes for software this site does not run: WordPress, livewire, Laravel debug tooling, Spring actuator, Exchange/O365, phpMyAdmin, GraphQL, Swagger/OpenAPI, Elasticsearch, plus observed probe paths /server /tasting /api and /api/<secret-ish>. Bare /api is not blocked with a trailing segment so real /api/* routes survive; /api/csp-report, /api/v1/* and /docs stay live.",
+      "enabled": true
+    },
+    {
+      "action": "block",
+      "expression": "(any(http.user_agent, lower(http.user_agent) contains \"sqlmap\")) or (any(http.user_agent, lower(http.user_agent) contains \"nikto\")) or (any(http.user_agent, lower(http.user_agent) contains \"nuclei\")) or (any(http.user_agent, lower(http.user_agent) contains \"wpscan\")) or (any(http.user_agent, lower(http.user_agent) contains \"masscan\")) or (any(http.user_agent, lower(http.user_agent) contains \"zgrab\")) or (any(http.user_agent, lower(http.user_agent) contains \"nessus\")) or (any(http.user_agent, lower(http.user_agent) contains \"openvas\")) or (any(http.user_agent, lower(http.user_agent) contains \"acunetix\")) or (any(http.user_agent, lower(http.user_agent) contains \"netsparker\")) or (any(http.user_agent, lower(http.user_agent) contains \"arachni\")) or (any(http.user_agent, lower(http.user_agent) contains \"w3af\")) or (any(http.user_agent, lower(http.user_agent) contains \"nmap\")) or (any(http.user_agent, lower(http.user_agent) contains \"metasploit\")) or (any(http.user_agent, lower(http.user_agent) contains \"wfuzz\")) or (any(http.user_agent, lower(http.user_agent) contains \"gobuster\")) or (any(http.user_agent, lower(http.user_agent) contains \"dirbuster\")) or (any(lower(http.user_agent), lower(http.user_agent) contains \"joomlavs\")) or (any(lower(http.user_agent), lower(http.user_agent) contains \"plecost\"))",
+      "description": "Scanner/exploit-framework User-Agents (sqlmap, nikto, nuclei, wpscan, masscan, zgrab, nessus, openvas, acunetix, netsparker, arachni, w3af, nmap, metasploit, wfuzz, gobuster, dirbuster, joomlavs, plecost). Deliberately narrow - generic UAs (curl, Go-http-client, python-requests) are never blocked on UA alone.",
+      "enabled": true
+    }
+  ],
+  "encoded_variant_note": "WAF expression matching sees the request path percent-encoded. Rules 1-3 match the decoded-looking lower(http.request.uri.path) form Cloudflare evaluates; for double-encoded / %2e / %2f leftovers that slip through, add the managed rules 'Block requests with known bad bot behavior' or an extra rule matching http.request.uri against (%2e|%252e|%2f|cannot)",
+  "origin_layer_note": "Keep infra/nginx-block-404-noise.conf + the vhost patch for the origin's own reverse proxy as defense in depth behind Cloudflare. The edge rules do the heavy lifting since every scanner request transits CF first."
+}
